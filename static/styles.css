@@ -1,0 +1,5 @@
+body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Hiragino Kaku Gothic ProN', Meiryo, sans-serif; padding: 18px; }
+.hands-grid { display:flex; gap:20px; flex-wrap:wrap; margin-top:12px; }
+.tiles-row { display:flex; gap:6px; align-items:flex-end; margin-top:6px; }
+.tile { width:48px; height:70px; border-radius:6px; border:1px solid #bbb; box-shadow:0 2px 4px rgba(0,0,0,0.12); background:#fff; object-fit:contain; }
+@media (max-width:600px){ .tile{ width:36px; height:52px; } .hands-grid{ gap:10px; } }

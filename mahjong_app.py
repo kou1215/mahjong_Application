@@ -1,6 +1,15 @@
 import random
 from collections import Counter
 from functools import lru_cache
+import importlib
+
+# Try to detect external `mahjong` library; if available we'll prefer it for shanten
+try:
+	_mahjong_lib = importlib.import_module('mahjong')
+	_MAHJONG_AVAILABLE = True
+except Exception:
+	_mahjong_lib = None
+	_MAHJONG_AVAILABLE = False
 
 #このコードめっちゃいいね！！シンプルな麻雀の壁の構築、配牌、手牌のソート、そして基本的なドローと捨てのシミュレーションが実装されているね。これをベースにして、さらに複雑なルールや役の判定なども追加できそうだね。
 def build_wall():
@@ -207,6 +216,28 @@ def shanten_kokushi(counts):
 
 
 def shanten(hand):
+	# If an external mahjong library is installed, try to use it.
+	if _MAHJONG_AVAILABLE:
+		try:
+			# Common API: mahjong.shanten.Shanten
+			try:
+				from mahjong.shanten import Shanten
+				sh = Shanten()
+				# many implementations accept a list of tiles like ['1m','2m',...]
+				return sh.calculate_shanten(hand)
+			except Exception:
+				# fallback: try module-level helpers
+				try:
+					from mahjong import shanten as sh_mod
+					if hasattr(sh_mod, 'calculate_shanten'):
+						return sh_mod.calculate_shanten(hand)
+					if hasattr(sh_mod, 'shanten'):
+						return sh_mod.shanten(hand)
+				except Exception:
+					pass
+		except Exception:
+			pass
+	# Fallback to built-in implementation
 	counts = hand_to_counts(hand)
 	s_std = shanten_standard(counts)
 	s_chi = shanten_chiitoitsu(counts)

@@ -4,6 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Mahjong Simulator</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}">
 </head>
 <body>
   <h1>Mahjong Simulator</h1>
@@ -15,6 +16,23 @@
   {% if result %}
     <h2>Result</h2>
     <pre>{{ result }}</pre>
+  {% endif %}
+
+  {% if hands_view %}
+    <h2>Dealt Hands (images)</h2>
+    <div class="hands-grid">
+    {% for hv in hands_view %}
+      <div>
+        <div><strong>Player {{ hv.player }}</strong> (shanten: {{ hv.shanten }})</div>
+        <div class="tiles-row">
+          {% for t in hv.tiles %}
+            <img class="tile" src="{{ url_for('static', filename='tiles/' + t + '.png') }}" onerror="this.onerror=null;this.src='{{ url_for('static', filename='tiles/' + t + '.svg') }}'" alt="{{ t }}">
+          {% endfor %}
+        </div>
+        <div style="margin-top:6px; font-size:0.9em; color:#444">{{ hv.compact }}</div>
+      </div>
+    {% endfor %}
+    </div>
   {% endif %}
 </body>
 </html>
