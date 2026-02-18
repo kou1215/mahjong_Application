@@ -49,29 +49,41 @@ def print_hands(hands):
 
 
 def simulate_simple_game(turns=8):
+	out = run_simulation(turns)
+	print(out)
+
+
+def run_simulation(turns=8):
 	wall = build_wall()
 	hands = deal(wall)
-
-	print("--- Initial hands ---")
-	print_hands(hands)
-	print(f"Wall: {len(wall)} tiles remaining")
+	lines = []
+	lines.append("Simple Mahjong CLI — dealing and basic draw/discard simulation")
+	lines.append("--- Initial hands ---")
+	for i, h in enumerate(hands):
+		s = sort_hand(h)
+		lines.append(f"Player {i}: {len(h)} tiles -> {' '.join(s)}")
+	lines.append(f"Wall: {len(wall)} tiles remaining")
 
 	for turn in range(turns):
-		print(f"\n--- Turn {turn + 1} ---")
+		lines.append(f"\n--- Turn {turn + 1} ---")
 		for p in range(4):
 			if not wall:
-				print("Wall is empty.")
-				return
+				lines.append("Wall is empty.")
+				return '\n'.join(lines)
 			draw = wall.pop()
 			hands[p].append(draw)
 			# simple random discard
 			discard_index = random.randrange(len(hands[p]))
 			discard = hands[p].pop(discard_index)
-			print(f"Player {p} draws {draw} and discards {discard} ({len(hands[p])} tiles)")
-		print(f"Wall: {len(wall)} tiles remaining")
+			lines.append(f"Player {p} draws {draw} and discards {discard} ({len(hands[p])} tiles)")
+		lines.append(f"Wall: {len(wall)} tiles remaining")
 
-	print("\n--- Final hands ---")
-	print_hands(hands)
+	lines.append("\n--- Final hands ---")
+	for i, h in enumerate(hands):
+		s = sort_hand(h)
+		lines.append(f"Player {i}: {len(h)} tiles -> {' '.join(s)}")
+
+	return '\n'.join(lines)
 
 
 def main():

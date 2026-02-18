@@ -1,0 +1,20 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Mahjong Simulator</title>
+</head>
+<body>
+  <h1>Mahjong Simulator</h1>
+  <form method="post">
+    <label>Turns: <input type="number" name="turns" value="{{ turns }}" min="1" max="1000"></label>
+    <button type="submit">Simulate</button>
+  </form>
+
+  {% if result %}
+    <h2>Result</h2>
+    <pre>{{ result }}</pre>
+  {% endif %}
+</body>
+</html>
