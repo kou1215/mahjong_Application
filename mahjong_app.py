@@ -1,7 +1,7 @@
 import random
 from collections import Counter
 
-
+#このコードめっちゃいいね！！シンプルな麻雀の壁の構築、配牌、手牌のソート、そして基本的なドローと捨てのシミュレーションが実装されているね。これをベースにして、さらに複雑なルールや役の判定なども追加できそうだね。
 def build_wall():
 	suits = ['m', 'p', 's']
 	tiles = []
