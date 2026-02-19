@@ -8,6 +8,9 @@
 </head>
 <body>
   <h1>Mahjong Simulator</h1>
+  <form action="/reset" method="get" style="display:inline; margin-right:16px;">
+    <button type="submit">新規対局（リセット）</button>
+  </form>
   <form method="post">
     <label>Turns: <input type="number" name="turns" value="{{ turns }}" min="1" max="1000"></label>
     <button type="submit">Simulate</button>
@@ -20,19 +23,116 @@
 
   {% if hands_view %}
     <h2>Dealt Hands (images)</h2>
-    <div class="hands-grid">
+    <div class="hands-grid" id="hands-grid">
     {% for hv in hands_view %}
-      <div>
-        <div><strong>Player {{ hv.player }}</strong> (shanten: {{ hv.shanten }})</div>
-        <div class="tiles-row">
+      <div id="player-{{ hv.player }}">
+        <div><strong>Player {{ hv.player }}</strong> (shanten: <span class="shanten" id="shanten-{{ hv.player }}">{{ hv.shanten }}</span>)</div>
+        <div class="tiles-row" id="tiles-row-{{ hv.player }}">
           {% for t in hv.tiles %}
-            <img class="tile" src="{{ url_for('static', filename='tiles/' + t + '.png') }}" onerror="this.onerror=null;this.src='{{ url_for('static', filename='tiles/' + t + '.svg') }}'" alt="{{ t }}">
+            <img class="tile{% if hv.player == 0 %} clickable{% endif %}" data-player="{{ hv.player }}" data-index="{{ loop.index0 }}" src="{{ url_for('static', filename='tiles/' + t + '.png') }}" alt="{{ t }}">
           {% endfor %}
         </div>
-        <div style="margin-top:6px; font-size:0.9em; color:#444">{{ hv.compact }}</div>
+        <div style="margin-top:6px; font-size:0.9em; color:#444" id="compact-{{ hv.player }}">{{ hv.compact }}</div>
+        <div class="discards" id="discards-{{ hv.player }}"></div>
       </div>
     {% endfor %}
     </div>
+    <script>
+    // 画像エラー時に.png→.svgへ切り替える共通関数
+    function handleImageError(element, tileName) {
+      if (element.src.endsWith('.png')) {
+        element.onerror = null;
+        element.src = '/static/tiles/' + tileName + '.svg';
+      }
+    }
+    // 捨て牌履歴
+    const discards = [[], [], [], []];
+
+    // Player 0 の手牌クリックイベント
+    function setTileClickHandlers() {
+      document.querySelectorAll('#tiles-row-0 .tile.clickable').forEach(img => {
+        img.onclick = function() {
+          const idx = parseInt(this.getAttribute('data-index'));
+          discardTile(idx);
+        };
+      });
+    }
+
+    async function discardTile(idx) {
+      const formData = new FormData();
+      formData.append('discard_index', idx);
+      const res = await fetch('/discard', { method: 'POST', body: formData });
+      if (!res.ok) {
+        alert('エラー: ' + (await res.text()));
+        return;
+      }
+      const data = await res.json();
+      // 最新のシャンテン数リストをwindowに保存
+      window.shantenValues = data.shanten_list;
+      updateHands(data.hands, data.shanten_list);
+      updateDiscards(data, data.auto_log);
+      setTileClickHandlers();
+    }
+
+    function updateHands(hands, shantenList) {
+      for (let p = 0; p < hands.length; ++p) {
+        const row = document.getElementById('tiles-row-' + p);
+        if (!row) continue;
+        row.innerHTML = '';
+        hands[p].forEach((t, i) => {
+          const img = document.createElement('img');
+          img.className = 'tile' + (p === 0 ? ' clickable' : '');
+          img.setAttribute('data-player', p);
+          img.setAttribute('data-index', i);
+          img.src = '/static/tiles/' + t + '.png';
+          img.alt = t;
+          img.onerror = function() { handleImageError(this, t); };
+          row.appendChild(img);
+        });
+        // シャンテン数も更新
+        const shantenSpan = document.getElementById('shanten-' + p);
+        if (shantenSpan) {
+          if (shantenList && shantenList[p] !== undefined) {
+            shantenSpan.innerText = shantenList[p];
+          } else {
+            shantenSpan.innerText = '?';
+          }
+        }
+      }
+    }
+
+    function updateDiscards(data, auto_log) {
+      // Player 0
+      if (data.discarded_tile !== undefined) {
+        discards[0].push(data.discarded_tile);
+        renderDiscards(0);
+      }
+      // Player 1-3
+      if (auto_log) {
+        auto_log.forEach(log => {
+          discards[log.player].push(log.discarded);
+          renderDiscards(log.player);
+        });
+      }
+    }
+
+    function renderDiscards(player) {
+      const div = document.getElementById('discards-' + player);
+      if (!div) return;
+      div.innerHTML = '';
+      discards[player].forEach(t => {
+        const img = document.createElement('img');
+        img.className = 'tile discard-tile';
+        img.src = '/static/tiles/' + t + '.png';
+        img.alt = t;
+        img.onerror = function() { handleImageError(this, t); };
+        div.appendChild(img);
+      });
+    }
+
+    // 初期化
+    setTileClickHandlers();
+    </script>
   {% endif %}
 </body>
 </html>
