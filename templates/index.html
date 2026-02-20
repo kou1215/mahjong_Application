@@ -8,9 +8,12 @@
 </head>
 <body>
   <h1>Mahjong Simulator</h1>
+
   <form action="/reset" method="get" style="display:inline; margin-right:16px;">
     <button type="submit">新規対局（リセット）</button>
   </form>
+
+  <div id="gameover-message" style="display:none; color:red; font-size:1.3em; margin:12px 0;">流局（山札がなくなりました）</div>
 
   {% if hands_view %}
     <h2>Dealt Hands (images)</h2>
@@ -49,6 +52,14 @@
       });
     }
 
+    // 牌クリック無効化
+    function disableTileClickHandlers() {
+      document.querySelectorAll('#tiles-row-0 .tile.clickable').forEach(img => {
+        img.onclick = null;
+        img.classList.remove('clickable');
+      });
+    }
+
     async function discardTile(idx) {
       const formData = new FormData();
       formData.append('discard_index', idx);
@@ -62,7 +73,15 @@
       window.shantenValues = data.shanten_list;
       updateHands(data.hands, data.shanten_list);
       updateDiscards(data, data.auto_log);
-      setTileClickHandlers();
+
+      if (data.is_game_over) {
+        // メッセージ表示
+        document.getElementById('gameover-message').style.display = '';
+        // 牌クリック無効化
+        disableTileClickHandlers();
+      } else {
+        setTileClickHandlers();
+      }
     }
 
     function updateHands(hands, shantenList) {
