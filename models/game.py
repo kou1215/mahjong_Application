@@ -77,12 +77,13 @@ class Game:
 		current_p_id = self.human_player_id
 		
 
+
 		# AI プレイヤーのターン処理（プレイヤー1, 2, 3）
 		for _ in range(self.num_players - 1):
 			current_p_id = (current_p_id + 1) % self.num_players
 
 			# ツモ前に山札チェック
-			if not self.wall:
+			if len(self.wall) <= 14:
 				self.is_game_over = True
 				break
 			# ツモ
@@ -102,7 +103,7 @@ class Game:
 
 		# 人間プレイヤー（Player 0）のツモ（ターン終了時）
 		player0_draw = None
-		if not self.wall:
+		if len(self.wall) <= 14:
 			self.is_game_over = True
 		else:
 			player0_draw = self.wall.pop()
@@ -112,7 +113,7 @@ class Game:
 		self.current_turn += 1
 
 		# ゲーム終了判定
-		if not self.wall:
+		if len(self.wall) <= 14:
 			self.is_game_over = True
 
 		return {
@@ -122,6 +123,7 @@ class Game:
 			'auto_log': ai_log,
 			'wall_count': len(self.wall),
 			'is_game_over': self.is_game_over,
+			'remaining_draws': max(len(self.wall) - 14, 0),
 		}
 
 	def to_dict(self) -> Dict[str, Any]:
