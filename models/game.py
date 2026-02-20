@@ -76,16 +76,18 @@ class Game:
 		ai_log = []
 		current_p_id = self.human_player_id
 		
+
 		# AI プレイヤーのターン処理（プレイヤー1, 2, 3）
 		for _ in range(self.num_players - 1):
 			current_p_id = (current_p_id + 1) % self.num_players
-			
-			# ツモ
-			if self.wall:
-				drawn = self.wall.pop()
-				self.players[current_p_id].add_tile(drawn)
-			else:
+
+			# ツモ前に山札チェック
+			if not self.wall:
+				self.is_game_over = True
 				break
+			# ツモ
+			drawn = self.wall.pop()
+			self.players[current_p_id].add_tile(drawn)
 
 			# AI プレイヤーが捨てる
 			player = self.players[current_p_id]
@@ -100,7 +102,9 @@ class Game:
 
 		# 人間プレイヤー（Player 0）のツモ（ターン終了時）
 		player0_draw = None
-		if self.wall:
+		if not self.wall:
+			self.is_game_over = True
+		else:
 			player0_draw = self.wall.pop()
 			current_player.add_tile(player0_draw)
 
