@@ -11,15 +11,6 @@
   <form action="/reset" method="get" style="display:inline; margin-right:16px;">
     <button type="submit">新規対局（リセット）</button>
   </form>
-  <form method="post">
-    <label>Turns: <input type="number" name="turns" value="{{ turns }}" min="1" max="1000"></label>
-    <button type="submit">Simulate</button>
-  </form>
-
-  {% if result %}
-    <h2>Result</h2>
-    <pre>{{ result }}</pre>
-  {% endif %}
 
   {% if hands_view %}
     <h2>Dealt Hands (images)</h2>
