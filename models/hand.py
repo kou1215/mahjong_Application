@@ -1,10 +1,11 @@
 """
 手牌を表すクラス
 """
-from typing import List
+from typing import List, Dict, Optional, Any
 
 from models.tile_utils import sort_hand, format_hand_compact
 from logic.shanten import calculate_shanten
+from logic.agari import AgariChecker
 
 
 class Hand:
@@ -16,6 +17,7 @@ class Hand:
 			tiles: 手牌リスト（初期値: 空）
 		"""
 		self.tiles = tiles if tiles is not None else []
+		self._agari_checker = AgariChecker()
 
 	def add_tile(self, tile: str) -> None:
 		"""牌を手に追加"""
@@ -39,6 +41,56 @@ class Hand:
 	def get_compact_format(self) -> str:
 		"""コンパクト形式で取得"""
 		return format_hand_compact(self.tiles)
+
+	def is_winning(self) -> bool:
+		"""
+		手牌がアガり形かどうかを判定
+		
+		Returns:
+			アガり形なら True、そうでなければ False
+		"""
+		if len(self.tiles) != 14:
+			return False
+		return self._agari_checker.is_agari(self.tiles)
+
+	def estimate_win_value(
+		self,
+		win_tile: str,
+		is_tsumo: bool = True,
+		is_dealer: bool = False,
+	) -> Dict[str, Any]:
+		"""
+		アガった場合の手数を計算
+		
+		Args:
+			win_tile: アガり牌
+			is_tsumo: ツモ和了かどうか
+			is_dealer: 親かどうか
+		
+		Returns:
+			{
+				'valid': bool,
+				'error': Optional[str],
+				'han': int,
+				'fu': int,
+				'cost': dict,
+				'limit': str,
+				'yaku': List[str],
+			}
+		"""
+		if len(self.tiles) != 14:
+			return {
+				'valid': False,
+				'error': '手牌は14枚である必要があります',
+				'han': 0,
+				'fu': 0,
+				'cost': {'main': 0},
+				'limit': 'なし',
+				'yaku': [],
+			}
+		return self._agari_checker.estimate_hand_value(
+			self.tiles, win_tile, is_tsumo, is_dealer
+		)
 
 	def copy(self) -> 'Hand':
 		"""手牌をコピー"""

@@ -101,5 +101,42 @@ def discard():
 	return jsonify(response_data)
 
 
+# 新しいルート: /check_agari
+@app.route('/check_agari', methods=['POST'])
+def check_agari():
+	"""アガり判定と点数計算"""
+	game = get_game_from_session()
+	if game is None:
+		return jsonify({'error': 'No game in progress'}), 400
+
+	try:
+		player_id = int(request.json.get('player_id', 0))
+		win_tile = request.json.get('win_tile')
+		is_tsumo = request.json.get('is_tsumo', True)
+	except (TypeError, ValueError):
+		return jsonify({'error': 'Invalid parameters'}), 400
+
+	if not win_tile:
+		return jsonify({'error': 'win_tile is required'}), 400
+
+	# アガり判定
+	is_agari = game.check_agari(player_id)
+	
+	# 点数計算
+	value_result = None
+	if is_agari:
+		value_result = game.estimate_agari_value(player_id, win_tile, is_tsumo)
+
+	response_data = {
+		'agari': is_agari,
+		'player_id': player_id,
+		'win_tile': win_tile,
+		'is_tsumo': is_tsumo,
+		'value': value_result if is_agari else None,
+	}
+
+	return jsonify(response_data)
+
+
 if __name__ == '__main__':
 	app.run(debug=True)

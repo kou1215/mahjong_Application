@@ -5,6 +5,8 @@ from typing import List, Optional, Dict, Any
 
 from models.tile_utils import build_wall
 from models.player import Player, AIPlayer
+from logic.agari import AgariChecker
+
 
 
 class Game:
@@ -22,6 +24,7 @@ class Game:
 		self.wall: List[str] = []
 		self.current_turn = 0
 		self.is_game_over = False
+		self._agari_checker = AgariChecker()
 		self._initialize_players()
 
 	def _initialize_players(self) -> None:
@@ -152,4 +155,79 @@ class Game:
 				}
 				for p in self.players
 			],
+		}
+
+	def check_agari(self, player_id: int) -> bool:
+		"""
+		指定プレイヤーがアガり形かどうかを判定
+		
+		Args:
+			player_id: プレイヤーID
+		
+		Returns:
+			アガり形なら True
+		"""
+		if player_id < 0 or player_id >= len(self.players):
+			return False
+		
+		player = self.players[player_id]
+		return player.hand.is_winning()
+
+	def estimate_agari_value(
+		self,
+		player_id: int,
+		win_tile: str,
+		is_tsumo: bool = True,
+	) -> Dict[str, Any]:
+		"""
+		プレイヤーのアガり成功時の手数を計算
+		
+		Args:
+			player_id: プレイヤーID
+			win_tile: アガり牌
+			is_tsumo: ツモ和了かどうか
+		
+		Returns:
+			手数計算結果（is_winning の詳細）
+		"""
+		if player_id < 0 or player_id >= len(self.players):
+			return {
+				'valid': False,
+				'error': 'プレイヤーIDが無効です',
+				'han': 0,
+				'fu': 0,
+				'cost': {'main': 0},
+				'limit': 'なし',
+				'yaku': [],
+			}
+		
+		player = self.players[player_id]
+		is_dealer = (player_id == 0)  # 親判定（プレイヤー0）
+		
+		return player.hand.estimate_win_value(win_tile, is_tsumo, is_dealer)
+
+	def check_and_calculate_win(
+		self, player_id: int, win_tile: str, is_tsumo: bool = True
+	) -> Dict[str, Any]:
+		"""
+		プレイヤーのアガりをチェックして点数を計算
+		
+		Args:
+			player_id: プレイヤーID
+			win_tile: アガり牌
+			is_tsumo: ツモ和了かどうか
+		
+		Returns:
+			{
+				'agari': bool,
+				'value': Dict,
+			}
+		"""
+		is_agari = self.check_agari(player_id)
+		
+		return {
+			'agari': is_agari,
+			'player_id': player_id,
+			'win_tile': win_tile,
+			'value': self.estimate_agari_value(player_id, win_tile, is_tsumo) if is_agari else None,
 		}
