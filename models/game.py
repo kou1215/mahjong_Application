@@ -22,6 +22,8 @@ class Game:
 		self.human_player_id = human_player_id
 		self.players: List[Player] = []
 		self.wall: List[str] = []
+		self.dead_wall: List[str] = []  # 王牌
+		self.dora_indicator: Optional[str] = None  # ドラ表示牌
 		self.current_turn = 0
 		self.is_game_over = False
 		self._agari_checker = AgariChecker()
@@ -37,9 +39,16 @@ class Game:
 
 	def start_game(self) -> None:
 		"""新規対局を開始"""
-		self.wall = build_wall()
+		full_wall = build_wall()
 		self.current_turn = 0
 		self.is_game_over = False
+
+		# 王牌（dead_wall）を山札の最後14枚から切り出す
+		self.dead_wall = full_wall[-14:]
+		self.wall = full_wall[:-14]
+
+		# ドラ表示牌（王牌の5枚目、インデックス4）
+		self.dora_indicator = self.dead_wall[4] if len(self.dead_wall) >= 5 else None
 
 		# 各プレイヤーに13枚配牌
 		for _ in range(13):
@@ -86,7 +95,7 @@ class Game:
 			current_p_id = (current_p_id + 1) % self.num_players
 
 			# ツモ前に山札チェック
-			if len(self.wall) <= 14:
+			if not self.wall:
 				self.is_game_over = True
 				break
 			# ツモ
@@ -106,7 +115,7 @@ class Game:
 
 		# 人間プレイヤー（Player 0）のツモ（ターン終了時）
 		player0_draw = None
-		if len(self.wall) <= 14:
+		if not self.wall:
 			self.is_game_over = True
 		else:
 			player0_draw = self.wall.pop()
@@ -116,7 +125,7 @@ class Game:
 		self.current_turn += 1
 
 		# ゲーム終了判定
-		if len(self.wall) <= 14:
+		if not self.wall:
 			self.is_game_over = True
 
 		return {
@@ -126,7 +135,7 @@ class Game:
 			'auto_log': ai_log,
 			'wall_count': len(self.wall),
 			'is_game_over': self.is_game_over,
-			'remaining_draws': max(len(self.wall) - 14, 0),
+			'remaining_draws': max(len(self.wall), 0),
 		}
 
 	def to_dict(self) -> Dict[str, Any]:
@@ -145,6 +154,7 @@ class Game:
 			'is_game_over': self.is_game_over,
 			'wall': self.wall,
 			'wall_count': len(self.wall),
+			'dora_indicator': self.dora_indicator,
 			'players': [
 				{
 					'player_id': p.player_id,

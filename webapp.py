@@ -18,13 +18,15 @@ def get_game_from_session() -> Game:
 	game.current_turn = game_data.get('current_turn', 0)
 	game.is_game_over = game_data.get('is_game_over', False)
 	game.wall = game_data.get('wall', [])
-	
+	game.dora_indicator = game_data.get('dora_indicator')
+	game.dead_wall = game_data.get('dead_wall', [])
+
 	# プレイヤーの手牌を復元
 	players_data = game_data.get('players', [])
 	for i, p_data in enumerate(players_data):
 		game.players[i].hand.tiles = p_data.get('hand', [])
 		game.players[i].discards = p_data.get('discards', [])
-	
+
 	return game
 
 
@@ -60,7 +62,13 @@ def index():
 			'compact': format_hand_compact(player.hand.to_list()),
 		})
 
-	return render_template('index.html', turns=0, hands_view=hands_view)
+	return render_template(
+		'index.html',
+		turns=0,
+		hands_view=hands_view,
+		dora_indicator=game.dora_indicator,
+		remaining_draws=max(0, len(game.wall))
+	)
 
 
 # 新しいルート: /discard
@@ -96,6 +104,8 @@ def discard():
 		'is_game_over': result['is_game_over'],
 		'hands': [p.hand.to_list() for p in game.players],
 		'shanten_list': [p.get_shanten() for p in game.players],
+		'dora_indicator': game.dora_indicator,
+		'remaining_draws': result.get('remaining_draws'),
 	}
 
 	return jsonify(response_data)
