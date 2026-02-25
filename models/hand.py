@@ -6,6 +6,7 @@ from typing import List, Dict, Optional, Any
 from models.tile_utils import sort_hand, format_hand_compact
 from logic.shanten import calculate_shanten
 from logic.agari import AgariChecker
+from mahjong.constants import EAST
 
 
 class Hand:
@@ -58,6 +59,9 @@ class Hand:
 		win_tile: str,
 		is_tsumo: bool = True,
 		is_dealer: bool = False,
+		player_wind: int = EAST,
+		round_wind: int = EAST,
+		dora_indicators: list = None,
 	) -> Dict[str, Any]:
 		"""
 		アガった場合の手数を計算
@@ -66,6 +70,9 @@ class Hand:
 			win_tile: アガり牌
 			is_tsumo: ツモ和了かどうか
 			is_dealer: 親かどうか
+			player_wind: 自風（1:東, 2:南, 3:西, 4:北）
+			round_wind: 場風（1:東, 2:南, 3:西, 4:北）
+			dora_indicators: ドラ表示牌のリスト
 		
 		Returns:
 			{
@@ -89,7 +96,9 @@ class Hand:
 				'yaku': [],
 			}
 		return self._agari_checker.estimate_hand_value(
-			self.tiles, win_tile, is_tsumo, is_dealer
+			self.tiles, win_tile, is_tsumo, is_dealer,
+			player_wind=player_wind, round_wind=round_wind,
+			dora_indicators=dora_indicators
 		)
 
 	def copy(self) -> 'Hand':

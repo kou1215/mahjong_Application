@@ -8,12 +8,15 @@ from mahjong.tile import TilesConverter
 from mahjong.hand_calculating.hand import HandCalculator
 from mahjong.hand_calculating.hand_config import HandConfig
 from mahjong.meld import Meld
+from mahjong.constants import EAST, SOUTH, WEST, NORTH
 
 from models.tile_utils import TILE_INDEX
 
 
 class AgariChecker:
     """アガり判定と手数計算のラッパークラス"""
+    
+    # 風は mahjong.constants の EAST/SOUTH/WEST/NORTH を使用する
 
     def __init__(self):
         """初期化"""
@@ -47,6 +50,9 @@ class AgariChecker:
         is_tsumo: bool = True,
         is_dealer: bool = False,
         melds: Optional[List[Meld]] = None,
+        player_wind: int = EAST,
+        round_wind: int = EAST,
+        dora_indicators: Optional[List[str]] = None,
     ) -> Optional[Dict[str, Any]]:
         """
         アガり手の点数を計算
@@ -57,6 +63,9 @@ class AgariChecker:
             is_tsumo: ツモ和了かどうかのフラグ
             is_dealer: 親かどうかのフラグ
             melds: 鳴きのリスト
+            player_wind: 自風（1:東, 2:南, 3:西, 4:北）
+            round_wind: 場風（1:東, 2:南, 3:西, 4:北）
+            dora_indicators: ドラ表示牌のリスト（例：['5m', '1p']）
         
         Returns:
             {
@@ -101,16 +110,26 @@ class AgariChecker:
 
             win_tile_136 = win_tile_136_list[0]
             
-            # HandConfig を設定
-            config = HandConfig(is_tsumo=is_tsumo)
+            # HandConfig を設定（player_wind/round_wind は HandConfig に渡す）
+            config = HandConfig(is_tsumo=is_tsumo, player_wind=player_wind, round_wind=round_wind)
             config.is_dealer = is_dealer
+
+            # ドラ表示牌を136形式に変換して渡す
+            dora_136 = []
+            if dora_indicators:
+                for ind in dora_indicators:
+                    idx = self.convert_tile_to_136(ind)
+                    if idx:
+                        dora_136.append(idx)
             
             # Melds が指定されていない場合は空リストを使用
             if melds is None:
                 melds = []
 
             # 手数を計算
-            result = self.calculator.estimate_hand_value(tiles_136, win_tile_136, melds=melds, config=config)
+            result = self.calculator.estimate_hand_value(
+                tiles_136, win_tile_136, melds=melds, dora_indicators=dora_136, config=config
+            )
 
             # 結果を整形
             # limit を翻数から判定

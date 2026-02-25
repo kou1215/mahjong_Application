@@ -6,6 +6,7 @@ from typing import List, Optional, Dict, Any
 from models.tile_utils import build_wall
 from models.player import Player, AIPlayer
 from logic.agari import AgariChecker
+from mahjong.constants import EAST, SOUTH, WEST, NORTH
 
 
 
@@ -24,6 +25,7 @@ class Game:
 		self.wall: List[str] = []
 		self.dead_wall: List[str] = []  # 王牌
 		self.dora_indicator: Optional[str] = None  # ドラ表示牌
+		self.round_wind: int = EAST  # 場風（mahjong.constants の EAST/SOUTH/... を使用）
 		self.current_turn = 0
 		self.is_game_over = False
 		self._agari_checker = AgariChecker()
@@ -155,6 +157,7 @@ class Game:
 			'wall': self.wall,
 			'wall_count': len(self.wall),
 			'dora_indicator': self.dora_indicator,
+			'round_wind': self.round_wind,
 			'players': [
 				{
 					'player_id': p.player_id,
@@ -214,7 +217,18 @@ class Game:
 		player = self.players[player_id]
 		is_dealer = (player_id == 0)  # 親判定（プレイヤー0）
 		
-		return player.hand.estimate_win_value(win_tile, is_tsumo, is_dealer)
+		# 自風を計算（プレイヤーIDを基に）
+		winds = [EAST, SOUTH, WEST, NORTH]
+		player_wind = winds[player_id % len(winds)]  # プレイヤー0→EAST, 1→SOUTH, ...
+		
+		# ドラ表示牌をリストに変換
+		dora_indicators = [self.dora_indicator] if self.dora_indicator else None
+		
+		return player.hand.estimate_win_value(
+			win_tile, is_tsumo, is_dealer,
+			player_wind=player_wind, round_wind=self.round_wind,
+			dora_indicators=dora_indicators
+		)
 
 	def check_and_calculate_win(
 		self, player_id: int, win_tile: str, is_tsumo: bool = True
