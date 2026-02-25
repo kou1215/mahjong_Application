@@ -92,6 +92,7 @@
     
     // 最後に引いた牌を記録
     let lastDrawnTile = null;
+    window.player0_draw = null;
 
     // Player 0 の手牌クリックイベント
     function setTileClickHandlers() {
@@ -120,6 +121,7 @@
         return;
       }
       const data = await res.json();
+      window.player0_draw = data.player0_draw;
       // 最新のシャンテン数リストをwindowに保存
       window.shantenValues = data.shanten_list;
       lastDrawnTile = data.player0_draw; // 最後に引いた牌を記録
@@ -224,16 +226,61 @@
         const row = document.getElementById('tiles-row-' + p);
         if (!row) continue;
         row.innerHTML = '';
-        hands[p].forEach((t, i) => {
-          const img = document.createElement('img');
-          img.className = 'tile' + (p === 0 ? ' clickable' : '');
-          img.setAttribute('data-player', p);
-          img.setAttribute('data-index', i);
-          img.src = '/static/tiles/' + t + '.png';
-          img.alt = t;
-          img.onerror = function() { handleImageError(this, t); };
-          row.appendChild(img);
-        });
+        if (p === 0) {
+          // Player 0: ツモ牌分離表示（2巡目以降のみ）
+          const hand = hands[0];
+          const drawTile = window.player0_draw;
+          if (hand.length === 14 && drawTile) {
+            // handのコピーを作成し、drawTileを1つだけ除去
+            const handCopy = hand.slice();
+            const drawIdx = handCopy.indexOf(drawTile);
+            if (drawIdx !== -1) handCopy.splice(drawIdx, 1);
+            // 13枚を描画
+            handCopy.forEach((t, i) => {
+              const img = document.createElement('img');
+              img.className = 'tile clickable';
+              img.setAttribute('data-player', 0);
+              img.setAttribute('data-index', i);
+              img.src = '/static/tiles/' + t + '.png';
+              img.alt = t;
+              img.onerror = function() { handleImageError(this, t); };
+              row.appendChild(img);
+            });
+            // drawTileを右端に描画
+            const img = document.createElement('img');
+            img.className = 'tile clickable tsumo-tile';
+            img.setAttribute('data-player', 0);
+            img.setAttribute('data-index', drawIdx); // 元のインデックス
+            img.src = '/static/tiles/' + drawTile + '.png';
+            img.alt = drawTile;
+            img.onerror = function() { handleImageError(this, drawTile); };
+            row.appendChild(img);
+          } else {
+            // 1巡目や13枚時は通常通り
+            hand.forEach((t, i) => {
+              const img = document.createElement('img');
+              img.className = 'tile clickable';
+              img.setAttribute('data-player', 0);
+              img.setAttribute('data-index', i);
+              img.src = '/static/tiles/' + t + '.png';
+              img.alt = t;
+              img.onerror = function() { handleImageError(this, t); };
+              row.appendChild(img);
+            });
+          }
+        } else {
+          // 他プレイヤーは従来通り
+          hands[p].forEach((t, i) => {
+            const img = document.createElement('img');
+            img.className = 'tile';
+            img.setAttribute('data-player', p);
+            img.setAttribute('data-index', i);
+            img.src = '/static/tiles/' + t + '.png';
+            img.alt = t;
+            img.onerror = function() { handleImageError(this, t); };
+            row.appendChild(img);
+          });
+        }
         // シャンテン数も更新
         const shantenSpan = document.getElementById('shanten-' + p);
         if (shantenSpan) {
