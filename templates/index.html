@@ -5,9 +5,54 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Mahjong Simulator</title>
   <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}">
+  <style>
+    #game-info {
+      background: #2c5d3f;
+      color: #fff;
+      border-radius: 10px;
+      padding: 12px 24px;
+      margin: 18px 0 18px 0;
+      display: flex;
+      align-items: center;
+      font-size: 1.15em;
+      gap: 32px;
+    }
+    #dora-indicator-area {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .dora-tile {
+      width: 48px;
+      height: 70px;
+      border-radius: 6px;
+      border: 2px solid gold;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.18);
+      background: #fff;
+      object-fit: contain;
+      margin-left: 6px;
+    }
+    #remaining-draws {
+      font-weight: bold;
+      font-size: 1.1em;
+    }
+  </style>
 </head>
 <body>
+
   <h1>Mahjong Simulator</h1>
+
+  <div id="game-info">
+    <div id="dora-indicator-area">
+      ドラ表示牌:
+      {% if hands_view and dora_indicator %}
+        <img id="dora-indicator-img" class="tile dora-tile" src="/static/tiles/{{ dora_indicator }}.png" alt="{{ dora_indicator }}" onerror="handleImageError(this, '{{ dora_indicator }}')">
+      {% else %}
+        <span id="dora-indicator-img"></span>
+      {% endif %}
+    </div>
+    <div id="remaining-draws" style="margin-left:24px;">残りツモ回数: <span id="remaining-draws-count">{{ remaining_draws if hands_view else '' }}</span></div>
+  </div>
 
   <form action="/reset" method="get" style="display:inline; margin-right:16px;">
     <button type="submit">新規対局（リセット）</button>
@@ -80,6 +125,39 @@
       lastDrawnTile = data.player0_draw; // 最後に引いた牌を記録
       updateHands(data.hands, data.shanten_list);
       updateDiscards(data, data.auto_log);
+
+      // ドラ表示牌の更新
+      const doraImgArea = document.getElementById('dora-indicator-area');
+      if (doraImgArea) {
+        let doraImg = document.getElementById('dora-indicator-img');
+        if (doraImg) {
+          if (data.dora_indicator) {
+            doraImg.src = '/static/tiles/' + data.dora_indicator + '.png';
+            doraImg.alt = data.dora_indicator;
+            doraImg.onerror = function() { handleImageError(this, data.dora_indicator); };
+          } else {
+            doraImg.src = '';
+            doraImg.alt = '';
+          }
+        } else if (data.dora_indicator) {
+          // 画像がなければ新規作成
+          doraImg = document.createElement('img');
+          doraImg.id = 'dora-indicator-img';
+          doraImg.className = 'tile dora-tile';
+          doraImg.src = '/static/tiles/' + data.dora_indicator + '.png';
+          doraImg.alt = data.dora_indicator;
+          doraImg.onerror = function() { handleImageError(this, data.dora_indicator); };
+          doraImgArea.appendChild(doraImg);
+        }
+      }
+
+      // 残りツモ回数の更新
+      if (typeof data.remaining_draws !== 'undefined') {
+        const drawsElem = document.getElementById('remaining-draws-count');
+        if (drawsElem) {
+          drawsElem.textContent = data.remaining_draws;
+        }
+      }
 
       if (data.is_game_over) {
         // メッセージ表示
