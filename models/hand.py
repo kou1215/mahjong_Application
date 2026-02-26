@@ -35,9 +35,9 @@ class Hand:
 		"""手牌をソート"""
 		self.tiles = sort_hand(self.tiles)
 
-	def get_shanten(self) -> int:
+	def get_shanten(self, open_melds_count: int = 0) -> int:
 		"""シャンテン数を取得"""
-		return calculate_shanten(self.tiles)
+		return calculate_shanten(self.tiles, open_melds_count=open_melds_count)
 
 	def get_compact_format(self) -> str:
 		"""コンパクト形式で取得"""
@@ -59,6 +59,7 @@ class Hand:
 		win_tile: str,
 		is_tsumo: bool = True,
 		is_dealer: bool = False,
+		melds: list = None,
 		player_wind: int = EAST,
 		round_wind: int = EAST,
 		dora_indicators: list = None,
@@ -85,18 +86,9 @@ class Hand:
 				'yaku': List[str],
 			}
 		"""
-		if len(self.tiles) != 14:
-			return {
-				'valid': False,
-				'error': '手牌は14枚である必要があります',
-				'han': 0,
-				'fu': 0,
-				'cost': {'main': 0},
-				'limit': 'なし',
-				'yaku': [],
-			}
 		return self._agari_checker.estimate_hand_value(
 			self.tiles, win_tile, is_tsumo, is_dealer,
+			melds=melds,
 			player_wind=player_wind, round_wind=round_wind,
 			dora_indicators=dora_indicators
 		)

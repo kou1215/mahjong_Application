@@ -23,7 +23,46 @@ class AgariChecker:
         self.agari = MahjongAgari()
         self.calculator = HandCalculator()
 
-    def is_agari(self, hand_tiles: List[str]) -> bool:
+    def _normalize_meld_objects(self, melds: Optional[List[Any]]) -> List[Meld]:
+        """melds を Meld オブジェクト配列へ正規化する。"""
+        if not melds:
+            return []
+
+        normalized: List[Meld] = []
+        for meld in melds:
+            if isinstance(meld, Meld):
+                normalized.append(meld)
+            elif isinstance(meld, list):
+                m = self._build_meld_object(meld)
+                if m is not None:
+                    normalized.append(m)
+        return normalized
+
+    def _flatten_meld_tiles(self, melds: Optional[List[Any]]) -> List[str]:
+        """副露表現（文字列リスト or Meld）を文字列牌リストへ平坦化する。"""
+        meld_objects = self._normalize_meld_objects(melds)
+        if not meld_objects:
+            return []
+
+        flattened: List[str] = []
+        for meld in meld_objects:
+            for tile_136 in (meld.tiles or []):
+                flattened.append(self._tile136_to_str(tile_136))
+        return flattened
+
+    def _tile136_to_str(self, tile_136: int) -> str:
+        """136牌IDを内部文字列表現へ変換。"""
+        idx34 = tile_136 // 4
+        if 0 <= idx34 <= 8:
+            return f"{idx34 + 1}m"
+        if 9 <= idx34 <= 17:
+            return f"{idx34 - 8}p"
+        if 18 <= idx34 <= 26:
+            return f"{idx34 - 17}s"
+        honors = ['E', 'S', 'W', 'N', 'P', 'F', 'C']
+        return honors[idx34 - 27]
+
+    def is_agari(self, hand_tiles: List[str], melds: Optional[List[Any]] = None) -> bool:
         """
         手牌がアガり形かどうかを判定
         
@@ -33,15 +72,75 @@ class AgariChecker:
         Returns:
             アガり形なら True、そうでなければ False
         """
-        if len(hand_tiles) != 14:
+        meld_objects = self._normalize_meld_objects(melds)
+        meld_tiles = self._flatten_meld_tiles(meld_objects)
+        total_tiles = len(hand_tiles) + len(meld_tiles)
+        if total_tiles != 14:
             return False
         
         try:
-            # リスト形式から34配列に変換
-            tiles_34 = self._tiles_to_34_array(hand_tiles)
-            return self.agari.is_agari(tiles_34)
+            full_tiles = hand_tiles + meld_tiles
+            tiles_34 = self._tiles_to_34_array(full_tiles)
+            open_sets_34 = [m.tiles_34 for m in meld_objects] if meld_objects else None
+            return self.agari.is_agari(tiles_34, open_sets_34)
         except Exception:
             return False
+
+    def can_win(
+        self,
+        hand_tiles: List[str],
+        win_tile: str,
+        melds: Optional[List[Meld]] = None,
+        is_tsumo: bool = False,
+        player_wind: int = EAST,
+        round_wind: int = EAST,
+    ) -> bool:
+        """指定和了牌で和了可能かを判定する（副露考慮）。"""
+        result = self.estimate_hand_value(
+            hand_tiles=hand_tiles,
+            win_tile=win_tile,
+            is_tsumo=is_tsumo,
+            melds=melds,
+            player_wind=player_wind,
+            round_wind=round_wind,
+        )
+        return bool(result and result.get('valid') and not result.get('error'))
+
+    def meld_strings_to_objects(self, meld_tiles_list: List[List[str]]) -> List[Meld]:
+        """内部表現の副露（文字列リスト）を mahjong.meld.Meld の配列へ変換する。"""
+        result: List[Meld] = []
+        for tiles in meld_tiles_list or []:
+            if not tiles:
+                continue
+            meld_obj = self._build_meld_object(tiles)
+            if meld_obj is not None:
+                result.append(meld_obj)
+        return result
+
+    def _build_meld_object(self, tiles: List[str]) -> Optional[Meld]:
+        """3/4枚の牌リストから Meld オブジェクトを作成。"""
+        if len(tiles) not in (3, 4):
+            return None
+
+        tile_136 = self._tiles_to_136_array(tiles)
+        if len(tile_136) != len(tiles):
+            return None
+
+        if len(tiles) == 4:
+            return Meld(meld_type=Meld.KAN, tiles=tile_136, opened=True)
+
+        if all(t == tiles[0] for t in tiles):
+            return Meld(meld_type=Meld.PON, tiles=tile_136, opened=True)
+
+        try:
+            nums = sorted(int(t[0]) for t in tiles)
+            suits = {t[1] for t in tiles if len(t) == 2}
+            if len(suits) == 1 and list(suits)[0] in ('m', 'p', 's') and nums == [nums[0], nums[0] + 1, nums[0] + 2]:
+                return Meld(meld_type=Meld.CHI, tiles=tile_136, opened=True)
+        except Exception:
+            return None
+
+        return None
 
     def estimate_hand_value(
         self,
@@ -87,10 +186,22 @@ class AgariChecker:
                 'yaku': List[str],        # 成立した役のリスト
             }
         """
-        if len(hand_tiles) != 14:
+        meld_objects = self._normalize_meld_objects(melds)
+
+        # ロン時は他家の捨て牌（win_tile）が手牌配列に未反映のことがあるため、ここで正規化する。
+        # 手牌（暗部）期待枚数 = 14 - 副露枚数
+        meld_tiles_count = sum(len(getattr(m, 'tiles', []) or []) for m in meld_objects)
+        expected_concealed_tiles = 14 - meld_tiles_count
+
+        normalized_hand_tiles = list(hand_tiles)
+        if len(normalized_hand_tiles) == expected_concealed_tiles - 1:
+            normalized_hand_tiles.append(win_tile)
+
+        full_hand_tiles = normalized_hand_tiles + self._flatten_meld_tiles(meld_objects)
+        if len(full_hand_tiles) != 14:
             return {
                 'valid': False,
-                'error': '手牌は14枚である必要があります',
+                'error': '手牌＋副露の合計は14枚である必要があります',
                 'han': 0,
                 'fu': 0,
                 'cost': {'main': 0},
@@ -100,12 +211,12 @@ class AgariChecker:
 
         try:
             # タイル情報の変換
-            tiles_136 = self._tiles_to_136_array(hand_tiles)
+            tiles_136 = self._tiles_to_136_array(full_hand_tiles)
             # アガり牌は convert_tile_to_136 で正規化（英文字字牌にも対応）
             win_tile_136 = self.convert_tile_to_136(win_tile)
 
             # 変換に失敗した場合は invalid
-            if not tiles_136 or win_tile_136 == 0:
+            if not tiles_136 or win_tile_136 is None:
                 return {
                     'valid': False,
                     'error': 'タイル形式が無効です',
@@ -126,17 +237,15 @@ class AgariChecker:
             if dora_indicators:
                 for ind in dora_indicators:
                     idx = self.convert_tile_to_136(ind)
-                    if idx:
+                    if idx is not None:
                         dora_136.append(idx)
             
-            # Melds が指定されていない場合は空リストを使用
-            if melds is None:
-                melds = []
-
             # 手数を計算
             result = self.calculator.estimate_hand_value(
-                tiles_136, win_tile_136, melds=melds, dora_indicators=dora_136, config=config
+                tiles_136, win_tile_136, melds=meld_objects, dora_indicators=dora_136, config=config
             )
+
+            yaku_list = result.yaku if result and result.yaku is not None else []
 
             # 結果を整形
             # limit を翻数から判定
@@ -149,7 +258,7 @@ class AgariChecker:
                 'fu': result.fu,
                 'cost': result.cost,  # 詳細な支払い情報をそのまま返す
                 'limit': limit,
-                'yaku': [yaku.name for yaku in result.yaku],
+                'yaku': [yaku.name for yaku in yaku_list],
             }
         except Exception as e:
             return {
@@ -206,7 +315,7 @@ class AgariChecker:
             # フォーマット不正の場合は空リストを返す
             return []
     
-    def convert_tile_to_136(self, tile: str) -> int:
+    def convert_tile_to_136(self, tile: str) -> Optional[int]:
         """
         単一の牌を136形式に変換（最初のコピーを返す）
         
@@ -218,7 +327,7 @@ class AgariChecker:
             tile: 牌（例：'1m', 'E', 'P', '1z'）
         
         Returns:
-            136形式のインデックス
+            136形式のインデックス（失敗時は None）
         """
         # 英文字字牌を数字表記に変換
         z_map = {'E': '1z', 'S': '2z', 'W': '3z', 'N': '4z',
@@ -226,9 +335,9 @@ class AgariChecker:
         tile_norm = z_map.get(tile, tile)
         try:
             result = TilesConverter.one_line_string_to_136_array(tile_norm)
-            return result[0] if result else 0
+            return result[0] if result else None
         except Exception:
-            return 0
+            return None
 
     def _calculate_limit(self, han: int) -> str:
         """

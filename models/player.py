@@ -29,7 +29,7 @@ class Player:
 
 	def get_shanten(self) -> int:
 		"""シャンテン数を取得"""
-		return self.hand.get_shanten()
+		return self.hand.get_shanten(open_melds_count=len(self.melds))
 
 	def choose_discard(self) -> int:
 		"""
@@ -75,21 +75,33 @@ class Player:
 		self.hand.sort()
 		return True
 
-	def call_chow(self, tiles: List[str]) -> bool:
+	def call_chow(self, tiles: List[str], discarded_tile: str = None) -> bool:
 		"""
 		チーを成立させる
 		
 		Args:
 			tiles: チーを作る3つの牌（連続）
+			discarded_tile: 他家の捨て牌（指定がない場合は従来互換動作）
 		
 		Returns:
 			成功なら True
 		"""
 		if len(tiles) != 3:
 			return False
+
+		tiles_to_remove = []
+		if discarded_tile is None:
+			# 後方互換: 先頭が捨て牌である前提
+			tiles_to_remove = tiles[1:]
+		else:
+			# 3枚の組から、捨て牌1枚分のみ除外して手牌から2枚削除する
+			tiles_to_remove = list(tiles)
+			if discarded_tile not in tiles_to_remove:
+				return False
+			tiles_to_remove.remove(discarded_tile)
 		
-		# 手牌から牌を削除
-		for tile in tiles[1:]:  # 捨てられた牌を除く2枚を削除
+		# 手牌から必要牌を削除
+		for tile in tiles_to_remove:
 			if tile in self.hand.tiles:
 				self.hand.remove_tile(self.hand.tiles.index(tile))
 			else:

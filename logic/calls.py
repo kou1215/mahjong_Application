@@ -100,7 +100,7 @@ class CallChecker:
         return possible_chows
 
     @staticmethod
-    def can_ron(hand_tiles: List[str], discarded_tile: str, agari_checker) -> bool:
+    def can_ron(hand_tiles: List[str], discarded_tile: str, agari_checker, melds: Optional[List] = None) -> bool:
         """
         ロン（他プレイヤーの捨て牌で和了）が可能かどうか判定
         
@@ -114,13 +114,8 @@ class CallChecker:
         """
         # ロン用の仮の手牌を作成（捨てられた牌を追加）
         ron_hand = hand_tiles + [discarded_tile]
-        
-        # 14枚に調整（13+1）
-        if len(ron_hand) != 14:
-            return False
-
-        # ロン用の判定（ツモではなくロンなので is_tsumo=False）
-        return agari_checker.is_agari(ron_hand)
+        # ロン用の判定（和了形判定）
+        return agari_checker.is_agari(ron_hand, melds=melds or [])
 
     @staticmethod
     def can_kan(hand_tiles: List[str], discarded_tile: str) -> bool:

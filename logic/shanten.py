@@ -4,6 +4,7 @@
 from functools import lru_cache
 from typing import List
 import importlib
+import warnings
 
 from models.tile_utils import hand_to_counts
 
@@ -113,8 +114,7 @@ def shanten_standard(counts: List[int]) -> int:
 	sh = 8 - m * 2 - t
 	if sh < min_shanten:
 		min_shanten = sh
-	# シャンテン数は 0 未満にはしない
-	return max(min_shanten, 0)
+	return min_shanten
 
 
 def shanten_chiitoitsu(counts: List[int]) -> int:
@@ -140,35 +140,34 @@ def shanten_kokushi(counts: List[int]) -> int:
 	return sh
 
 
-def calculate_shanten(hand: List[str]) -> int:
+def calculate_shanten(hand: List[str], open_melds_count: int = 0) -> int:
 	"""
 	手牌のシャンテン数を計算
-	mahjong.agari.Agariを使用した正確な計算
-	"""
-	from mahjong.agari import Agari
 	
-	agari = Agari()
+	- 可能なら mahjong.shanten.Shanten を使用
+	- 手牌は13/14枚だけでなく、副露後の枚数（例: 10/11/12）も受け付ける
+	"""
 	counts = hand_to_counts(hand)
 	valid_count = sum(counts)
-	# if hand doesn't contain exactly 14 valid tiles, treat as invalid/high shanten
-	if valid_count != 14:
+	# 通常の手牌構成に当てはまらない牌数は高シャンテン扱い
+	if valid_count == 0 or valid_count % 3 not in (1, 2):
 		return 8
-	
-	# アガリ形なら -1
-	if agari.is_agari(counts):
-		return -1
-	
-	# シャンテン値：単体の削除でテンパイになるかをチェック
-	for i in range(34):
-		if counts[i] > 0:
-			counts[i] -= 1
-			if agari.is_agari(counts):
-				counts[i] += 1
-				return 0  # テンパイ
-			counts[i] += 1
-	
-	# それ以外は以前のフォールバック実装に委ねる
-	# counts は既に定義
+
+	if _MAHJONG_AVAILABLE:
+		try:
+			from mahjong.shanten import Shanten
+			shanten = Shanten()
+			# open_melds_count が与えられた場合は内部状態に反映
+			# （現在の mahjong 実装では number_melds 属性で扱う）
+			if open_melds_count > 0 and hasattr(shanten, 'number_melds'):
+				with warnings.catch_warnings():
+					warnings.simplefilter('ignore', DeprecationWarning)
+					shanten.number_melds = open_melds_count
+			return shanten.calculate_shanten(counts)
+		except Exception:
+			pass
+
+	# フォールバック実装（mahjong ライブラリ未使用時）
 	s_std = shanten_standard(counts)
 	s_chi = shanten_chiitoitsu(counts)
 	s_kok = shanten_kokushi(counts)

@@ -3,6 +3,7 @@ from flask import Flask, render_template, request, session, redirect, url_for, j
 from models.game import Game
 from models.tile_utils import format_hand_compact
 from logic.calls import CallChecker
+from mahjong.constants import EAST
 
 app = Flask(__name__)
 # セッション用のシークレットキー（本番ではより安全な値に）
@@ -21,12 +22,19 @@ def get_game_from_session() -> Game:
 	game.wall = game_data.get('wall', [])
 	game.dora_indicator = game_data.get('dora_indicator')
 	game.dead_wall = game_data.get('dead_wall', [])
+	game.round_wind = game_data.get('round_wind', EAST)
+	game.phase = game_data.get('phase', 'discard')
+	game.last_discarded = game_data.get('last_discarded')
+	game.pending_calls = game_data.get('pending_calls', [])
+	game.passed_callers = game_data.get('passed_callers', [])
+	game.current_discarder_id = game_data.get('current_discarder_id')
 
 	# プレイヤーの手牌を復元
 	players_data = game_data.get('players', [])
 	for i, p_data in enumerate(players_data):
 		game.players[i].hand.tiles = p_data.get('hand', [])
 		game.players[i].discards = p_data.get('discards', [])
+		game.players[i].melds = p_data.get('melds', [])
 
 	return game
 
@@ -34,6 +42,47 @@ def get_game_from_session() -> Game:
 def save_game_to_session(game: Game) -> None:
 	"""ゲーム状態をセッションに保存"""
 	session['game_data'] = game.to_json_serializable()
+
+
+def build_state_response(game: Game, result: dict | None = None) -> dict:
+	"""現在のゲーム状態をフロント向けJSONに整形"""
+	result = result or {}
+	response_data = {
+		'current_turn': game.current_turn,
+		'phase': game.phase,
+		'awaiting_call': result.get('awaiting_call', game.phase == 'call_wait'),
+		'discarded_tile': result.get('discarded_tile', game.last_discarded),
+		'discarder_id': result.get('discarder_id', game.current_discarder_id),
+		'available_calls': result.get('available_calls', game.pending_calls),
+		'next_draw': result.get('next_draw'),
+		'player0_draw': result.get('player0_draw'),
+		'auto_log': result.get('auto_log', []),
+		'wall_count': result.get('wall_count', len(game.wall)),
+		'is_game_over': result.get('is_game_over', game.is_game_over),
+		'hands': [p.hand.to_list() for p in game.players],
+		'shanten_list': [p.get_shanten() for p in game.players],
+		'dora_indicator': game.dora_indicator,
+		'remaining_draws': result.get('remaining_draws', max(0, len(game.wall))),
+		'melds': [p.melds for p in game.players],
+		'agari_tiles': [game.get_agari_tiles(i) for i in range(game.num_players)],
+	}
+	if 'ok' in result:
+		response_data['ok'] = result['ok']
+	if 'action' in result:
+		response_data['action'] = result['action']
+	if 'error' in result:
+		response_data['error'] = result['error']
+	if 'agari' in result:
+		response_data['agari'] = result['agari']
+	if 'type' in result:
+		response_data['type'] = result['type']
+	if 'player_id' in result:
+		response_data['player_id'] = result['player_id']
+	if 'win_tile' in result:
+		response_data['win_tile'] = result['win_tile']
+	if 'value' in result:
+		response_data['value'] = result['value']
+	return response_data
 
 
 @app.route('/reset')
@@ -64,12 +113,21 @@ def index():
 			'shanten': shanten_val,
 			'compact': format_hand_compact(player.hand.to_list()),
 			'discards': player.discards,
+			'melds': player.melds,
+			'agari_tiles': game.get_agari_tiles(player.player_id),
 		})
+
+	agari_tiles_view = [game.get_agari_tiles(i) for i in range(game.num_players)]
 
 	return render_template(
 		'index.html',
 		turns=0,
 		hands_view=hands_view,
+		current_turn=game.current_turn,
+		phase=game.phase,
+		pending_calls=game.pending_calls,
+		last_discarded=game.last_discarded,
+		agari_tiles_view=agari_tiles_view,
 		dora_indicator=game.dora_indicator,
 		remaining_draws=max(0, len(game.wall))
 	)
@@ -85,33 +143,24 @@ def discard():
 
 	# Player 0 の捨て牌（他プレイヤーはAI自動）
 	try:
+		player_id = int(request.form.get('player_id', game.current_turn))
 		discard_index = int(request.form.get('discard_index'))
 	except (TypeError, ValueError):
 		return jsonify({'error': 'Invalid parameters'}), 400
+
+	if player_id != game.current_turn:
+		return jsonify({'error': f'現在の手番は Player {game.current_turn} です'}), 400
 
 	try:
 		result = game.process_discard(discard_index)
 	except ValueError as e:
 		return jsonify({'error': str(e)}), 400
+	if result.get('error'):
+		return jsonify({'error': result.get('error')}), 400
 
 	# ゲーム状態をセッションに保存
 	save_game_to_session(game)
-
-	# レスポンスを作成
-	response_data = {
-		'discarded_tile': result.get('discarded_tile'),
-		'available_calls': result.get('available_calls'),
-		'player0_draw': result.get('player0_draw'),
-		'auto_log': result.get('auto_log'),
-		'wall_count': result.get('wall_count', len(game.wall)),
-		'is_game_over': result.get('is_game_over', game.is_game_over),
-		'hands': [p.hand.to_list() for p in game.players],
-		'shanten_list': [p.get_shanten() for p in game.players],
-		'dora_indicator': game.dora_indicator,
-		'remaining_draws': result.get('remaining_draws', max(0, len(game.wall))),
-	}
-
-	return jsonify(response_data)
+	return jsonify(build_state_response(game, result))
 
 
 @app.route('/check_calls', methods=['POST'])
@@ -150,26 +199,12 @@ def apply_call():
 	except Exception:
 		return jsonify({'error': 'Invalid parameters'}), 400
 
-	if action == 'pong':
-		ok = game.apply_pong(player_id, tiles)
-	elif action == 'chow':
-		ok = game.apply_chow(player_id, tiles)
-	elif action == 'kan':
-		tile = tiles[0] if tiles else None
-		if tile:
-			ok = game.apply_kan(player_id, tile, is_closed=False)
-		else:
-			ok = False
-	elif action == 'ron':
-		ok = False
-	elif action == 'pass':
-		ok = True
-	else:
-		return jsonify({'error': 'Unknown action'}), 400
+	result = game.resolve_pending_call(player_id=player_id, action=action, tiles=tiles)
+	if not result.get('ok', False):
+		return jsonify({'error': result.get('error', 'Failed to apply call')}), 400
 
 	save_game_to_session(game)
-
-	return jsonify({'ok': ok, 'action': action, 'player_id': player_id})
+	return jsonify(build_state_response(game, result))
 
 
 # 新しいルート: /check_agari
