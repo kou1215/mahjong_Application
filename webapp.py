@@ -55,10 +55,12 @@ def index():
 	# hands_viewの作成
 	hands_view = []
 	for player in game.players:
+		shanten_val = player.get_shanten()
+		print(f"[DEBUG] Player {player.player_id}: shanten={shanten_val}, hand={player.hand.to_list()}")
 		hands_view.append({
 			'player': player.player_id,
 			'tiles': player.hand.to_list(),
-			'shanten': player.get_shanten(),
+			'shanten': shanten_val,
 			'compact': format_hand_compact(player.hand.to_list()),
 		})
 

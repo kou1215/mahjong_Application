@@ -57,6 +57,8 @@ class AgariChecker:
         """
         アガり手の点数を計算
         
+        自風・場風・ドラを考慮した詳細な点数計算を行う
+        
         Args:
             hand_tiles: 手牌のリスト（14枚）
             win_tile: アガり牌
@@ -74,11 +76,15 @@ class AgariChecker:
                 'han': int,
                 'fu': int,
                 'cost': {
-                    'main': int,  # 総支払い金額
-                    'payment': Optional[str],  # 支払い形式の説明
+                    'main': int,          # 総支払い金額
+                    'main_bonus': int,    # 親／子のボーナス
+                    'additional': int,    # 追加支払い
+                    'additional_bonus': int,
+                    'kyoutaku_bonus': int,
+                    'total': int
                 },
-                'limit': str,  # 満貫、跳満など
-                'yaku': List[str],  # 役のリスト
+                'limit': str,             # 満貫、跳満など
+                'yaku': List[str],        # 成立した役のリスト
             }
         """
         if len(hand_tiles) != 14:
@@ -95,9 +101,11 @@ class AgariChecker:
         try:
             # タイル情報の変換
             tiles_136 = self._tiles_to_136_array(hand_tiles)
-            win_tile_136_list = TilesConverter.one_line_string_to_136_array(win_tile)
-            
-            if not tiles_136 or not win_tile_136_list:
+            # アガり牌は convert_tile_to_136 で正規化（英文字字牌にも対応）
+            win_tile_136 = self.convert_tile_to_136(win_tile)
+
+            # 変換に失敗した場合は invalid
+            if not tiles_136 or win_tile_136 == 0:
                 return {
                     'valid': False,
                     'error': 'タイル形式が無効です',
@@ -107,14 +115,13 @@ class AgariChecker:
                     'limit': 'なし',
                     'yaku': [],
                 }
-
-            win_tile_136 = win_tile_136_list[0]
             
             # HandConfig を設定（player_wind/round_wind は HandConfig に渡す）
             config = HandConfig(is_tsumo=is_tsumo, player_wind=player_wind, round_wind=round_wind)
             config.is_dealer = is_dealer
 
             # ドラ表示牌を136形式に変換して渡す
+            # ドラ表示牌のリストを136配列に変換（複数の牌に対応）
             dora_136 = []
             if dora_indicators:
                 for ind in dora_indicators:
@@ -140,7 +147,7 @@ class AgariChecker:
                 'error': result.error,
                 'han': result.han,
                 'fu': result.fu,
-                'cost': {'main': result.cost['main'], 'total': result.cost['total']},
+                'cost': result.cost,  # 詳細な支払い情報をそのまま返す
                 'limit': limit,
                 'yaku': [yaku.name for yaku in result.yaku],
             }
@@ -203,14 +210,22 @@ class AgariChecker:
         """
         単一の牌を136形式に変換（最初のコピーを返す）
         
+        字牌は英文字表記または数字表記両方に対応します。
+        mahjongライブラリの converter は英文字単独を受け付けないため
+        数字表記 (1z-7z) に正規化してから変換します。
+        
         Args:
-            tile: 牌（例：'1m', 'E'）
+            tile: 牌（例：'1m', 'E', 'P', '1z'）
         
         Returns:
             136形式のインデックス
         """
+        # 英文字字牌を数字表記に変換
+        z_map = {'E': '1z', 'S': '2z', 'W': '3z', 'N': '4z',
+                 'P': '5z', 'F': '6z', 'C': '7z'}
+        tile_norm = z_map.get(tile, tile)
         try:
-            result = TilesConverter.one_line_string_to_136_array(tile)
+            result = TilesConverter.one_line_string_to_136_array(tile_norm)
             return result[0] if result else 0
         except Exception:
             return 0
