@@ -137,7 +137,7 @@
     </div>
   </div>
 
-  <script>
+ <script>
     function handleImageError(element, tileName) {
       if (element.src.endsWith('.png')) {
         element.onerror = null;
@@ -167,7 +167,7 @@
 
     // アガり形判定でボタン色を更新
     function updateAgariButton() {
-      const button = document.getElementById('agari-button');
+      const button = document.getElementById('agari-btn'); // IDを正しく修正
       if (!button) return;
       
       // Player 0 のシャンテン数を取得
@@ -186,6 +186,17 @@
         button.style.background = '#4CAF50';
         button.title = '';
       }
+    }
+
+    // 誤って消えていた discardTile 関数を復元・修正
+    async function discardTile(idx) {
+      const formData = new FormData();
+      formData.append('discard_index', idx);
+      const res = await fetch('/discard', { method: 'POST', body: formData });
+      if (!res.ok) {
+        alert('エラー: ' + (await res.text()));
+        return;
+      }
       
       const data = await res.json();
       window.player0_draw = data.player0_draw;
@@ -194,6 +205,9 @@
       
       updateHands(data.hands, data.shanten_list);
       updateDiscards(data, data.auto_log);
+
+      // 手牌が更新されたらボタンの色も更新
+      updateAgariButton();
 
       const doraImgArea = document.getElementById('dora-indicator-area');
       if (doraImgArea) {
@@ -216,6 +230,7 @@
           doraImg.onerror = function() { handleImageError(this, data.dora_indicator); };
           doraImgArea.appendChild(doraImg);
         }
+      }
 
       if (typeof data.remaining_draws !== 'undefined') {
         const drawsElem = document.getElementById('remaining-draws-count');
@@ -359,6 +374,7 @@
     // 初期化
     if (document.querySelectorAll('#tiles-row-0 .tile.clickable').length > 0) {
       setTileClickHandlers();
+      updateAgariButton(); // 初期化時にもボタンの色を判定させる
     }
   </script>
 </body>
