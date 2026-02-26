@@ -1,0 +1,381 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Mahjong Simulator</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}">
+  <style>
+    /* 簡易バーカウンターレイアウトCSS (必要に応じてstyles.cssへ移動してください) */
+    #mahjong-stadium {
+      display: flex;
+      flex-direction: column;
+      height: 95vh;
+      justify-content: space-between;
+      padding: 10px;
+      background-color: #2c5d3f;
+      color: white;
+    }
+    #opponents-row {
+      display: flex;
+      justify-content: space-around;
+      align-items: flex-start;
+      margin-bottom: 20px;
+    }
+    .opponent-area {
+      text-align: center;
+      background: rgba(0,0,0,0.2);
+      padding: 10px;
+      border-radius: 8px;
+    }
+    .opponent-tile {
+      width: 32px; /* 相手の牌は小さく */
+      height: auto;
+    }
+    #center-table {
+      flex-grow: 1;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      border: 2px solid rgba(255,255,255,0.1);
+      border-radius: 15px;
+      padding: 20px;
+    }
+    #game-info {
+      display: flex;
+      align-items: center;
+      gap: 20px;
+      background: rgba(0,0,0,0.4);
+      padding: 10px 20px;
+      border-radius: 10px;
+      margin-bottom: 20px;
+    }
+    .center-discard-row {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      margin: 5px 0;
+    }
+    #my-area {
+      text-align: center;
+      background: rgba(0,0,0,0.3);
+      padding: 20px;
+      border-radius: 10px;
+    }
+    .tsumo-tile {
+      margin-left: 20px !important;
+    }
+  </style>
+</head>
+<body>
+  <div id="mahjong-stadium">
+    <div id="game-info">
+      <div id="dora-indicator-area">
+        ドラ表示牌:
+        {% if hands_view and dora_indicator %}
+          <img id="dora-indicator-img" class="tile dora-tile" src="/static/tiles/{{ dora_indicator }}.png" alt="{{ dora_indicator }}" style="width: 40px;" onerror="handleImageError(this, '{{ dora_indicator }}')">
+        {% else %}
+          <span id="dora-indicator-img"></span>
+        {% endif %}
+      </div>
+      <div id="remaining-draws">残りツモ回数: <span id="remaining-draws-count">{{ remaining_draws if hands_view else '' }}</span></div>
+      <form action="/reset" method="get" style="display:inline; margin-left:20px;">
+        <button type="submit">新規対局（リセット）</button>
+      </form>
+    </div>
+
+    <div id="opponents-row">
+      {% if hands_view %}
+        <div class="opponent-area" id="opponent-3">
+          <div class="opponent-label">Player 3</div>
+          <div class="tiles-row opponent-tiles" id="tiles-row-3">
+            {% for t in hands_view[3].tiles %}
+              <img class="tile opponent-tile" data-player="3" data-index="{{ loop.index0 }}" src="{{ url_for('static', filename='tiles/ura.png') }}" alt="ura">
+            {% endfor %}
+          </div>
+          <div class="discards" id="discards-3"></div>
+        </div>
+        <div class="opponent-area" id="opponent-2">
+          <div class="opponent-label">Player 2</div>
+          <div class="tiles-row opponent-tiles" id="tiles-row-2">
+            {% for t in hands_view[2].tiles %}
+              <img class="tile opponent-tile" data-player="2" data-index="{{ loop.index0 }}" src="{{ url_for('static', filename='tiles/ura.png') }}" alt="ura">
+            {% endfor %}
+          </div>
+          <div class="discards" id="discards-2"></div>
+        </div>
+        <div class="opponent-area" id="opponent-1">
+          <div class="opponent-label">Player 1</div>
+          <div class="tiles-row opponent-tiles" id="tiles-row-1">
+            {% for t in hands_view[1].tiles %}
+              <img class="tile opponent-tile" data-player="1" data-index="{{ loop.index0 }}" src="{{ url_for('static', filename='tiles/ura.png') }}" alt="ura">
+            {% endfor %}
+          </div>
+          <div class="discards" id="discards-1"></div>
+        </div>
+      {% endif %}
+    </div>
+
+    <div id="center-table">
+      <div id="gameover-message" style="display:none;">流局（山牌がなくなりました）</div>
+    </div>
+
+    <div id="my-area">
+      {% if hands_view %}
+        {% if hands_view[0] %}
+           <div class="my-label">あなた (Player 0)</div>
+          <div class="discards" id="discards-0"></div>
+          <div class="tiles-row my-tiles" id="tiles-row-0">
+            {% for t in hands_view[0].tiles %}
+              <img class="tile clickable" data-player="0" data-index="{{ loop.index0 }}" src="{{ url_for('static', filename='tiles/' + t + '.png') }}" alt="{{ t }}">
+            {% endfor %}
+          </div>
+          <button type="button" id="agari-btn" onclick="checkAgari()">🎯 アガり判定</button>
+        {% endif %}
+      {% endif %}
+    </div>
+  </div>
+
+ <script>
+    function handleImageError(element, tileName) {
+      if (element.src.endsWith('.png')) {
+        element.onerror = null;
+        element.src = '/static/tiles/' + tileName + '.svg';
+      }
+    }
+
+    const discards = [[], [], [], []];
+    let lastDrawnTile = null;
+    window.player0_draw = null;
+
+    function setTileClickHandlers() {
+      document.querySelectorAll('#tiles-row-0 .tile.clickable').forEach(img => {
+        img.onclick = function() {
+          const idx = parseInt(this.getAttribute('data-index'));
+          discardTile(idx);
+        };
+      });
+    }
+
+    function disableTileClickHandlers() {
+      document.querySelectorAll('#tiles-row-0 .tile.clickable').forEach(img => {
+        img.onclick = null;
+        img.classList.remove('clickable');
+      });
+    }
+
+    // アガり形判定でボタン色を更新
+    function updateAgariButton() {
+      const button = document.getElementById('agari-btn'); // IDを正しく修正
+      if (!button) return;
+      
+      // Player 0 のシャンテン数を取得
+      const shanten = window.shantenValues ? window.shantenValues[0] : null;
+      
+      if (shanten === -1) {
+        // アガり形：ボタンを目立つ色（オレンジ系）に変更
+        button.style.background = '#FF6B35';
+        button.title = 'アガり形です！';
+      } else if (shanten === 0) {
+        // テンパイ：ボタンを注意色に
+        button.style.background = '#FFB703';
+        button.title = 'テンパイしています';
+      } else {
+        // 通常状態：緑
+        button.style.background = '#4CAF50';
+        button.title = '';
+      }
+    }
+
+    // 誤って消えていた discardTile 関数を復元・修正
+    async function discardTile(idx) {
+      const formData = new FormData();
+      formData.append('discard_index', idx);
+      const res = await fetch('/discard', { method: 'POST', body: formData });
+      if (!res.ok) {
+        alert('エラー: ' + (await res.text()));
+        return;
+      }
+      
+      const data = await res.json();
+      window.player0_draw = data.player0_draw;
+      window.shantenValues = data.shanten_list;
+      lastDrawnTile = data.player0_draw;
+      
+      updateHands(data.hands, data.shanten_list);
+      updateDiscards(data, data.auto_log);
+
+      // 手牌が更新されたらボタンの色も更新
+      updateAgariButton();
+
+      const doraImgArea = document.getElementById('dora-indicator-area');
+      if (doraImgArea) {
+        let doraImg = document.getElementById('dora-indicator-img');
+        if (doraImg) {
+          if (data.dora_indicator) {
+            doraImg.src = '/static/tiles/' + data.dora_indicator + '.png';
+            doraImg.alt = data.dora_indicator;
+            doraImg.onerror = function() { handleImageError(this, data.dora_indicator); };
+          } else {
+            doraImg.src = ''; doraImg.alt = '';
+          }
+        } else if (data.dora_indicator) {
+          doraImg = document.createElement('img');
+          doraImg.id = 'dora-indicator-img';
+          doraImg.className = 'tile dora-tile';
+          doraImg.style.width = '40px';
+          doraImg.src = '/static/tiles/' + data.dora_indicator + '.png';
+          doraImg.alt = data.dora_indicator;
+          doraImg.onerror = function() { handleImageError(this, data.dora_indicator); };
+          doraImgArea.appendChild(doraImg);
+        }
+      }
+
+      if (typeof data.remaining_draws !== 'undefined') {
+        const drawsElem = document.getElementById('remaining-draws-count');
+        if (drawsElem) drawsElem.textContent = data.remaining_draws;
+      }
+
+      if (data.is_game_over) {
+        document.getElementById('gameover-message').style.display = 'block';
+        disableTileClickHandlers();
+      } else {
+        setTileClickHandlers();
+      }
+    }
+
+    async function checkAgari() {
+      if (!lastDrawnTile) {
+        alert('引いた牌がありません');
+        return;
+      }
+      const res = await fetch('/check_agari', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ player_id: 0, win_tile: lastDrawnTile, is_tsumo: true })
+      });
+      if (!res.ok) {
+        alert('エラー: ' + (await res.text()));
+        return;
+      }
+      const data = await res.json();
+      showAgariResult(data);
+    }
+
+    function showAgariResult(data) {
+      if (!data.agari) { alert('アガっていません'); return; }
+      const value = data.value;
+      if (!value || !value.valid) {
+        alert('アガリが成立していません: ' + (value ? value.error : 'Unknown error'));
+        return;
+      }
+      const message = `★ アガり成功！\n\n翻数: ${value.han}翻\n符数: ${value.fu}符\n点数: ${value.cost.main}点（全員から合計 ${value.cost.total}点）\n限度: ${value.limit}\n役: ${value.yaku.join(', ')}`;
+      alert(message);
+    }
+
+    function updateHands(hands, shantenList) {
+      console.log('updateHands called with:', hands.length, 'players');
+      for (let p = 0; p < hands.length; ++p) {
+        const row = document.getElementById('tiles-row-' + p);
+        if (!row) {
+          console.warn('tiles-row-' + p + ' not found');
+          continue;
+        }
+        row.innerHTML = '';
+        
+        if (p === 0) {
+          const hand = hands[0];
+          const drawTile = window.player0_draw;
+          console.log('Player 0: drawTile =', drawTile, ', hand =', hand);
+          
+          if (hand.length === 14 && drawTile) {
+            const drawIdx = hand.lastIndexOf(drawTile); // 重複牌がある場合を考慮し最後をツモ牌とする
+            let normalTiles = [];
+            let tsumoTileNode = null;
+            hand.forEach((t, i) => {
+              const img = document.createElement('img');
+              img.className = 'tile clickable';
+              img.setAttribute('data-player', 0);
+              img.setAttribute('data-index', i); // 元の正確なインデックスを絶対に保持する
+              img.src = '/static/tiles/' + t + '.png';
+              img.alt = t;
+              img.onerror = function() { handleImageError(this, t); };
+              if (i === drawIdx) {
+                img.classList.add('tsumo-tile');
+                tsumoTileNode = img;
+              } else {
+                normalTiles.push(img);
+              }
+            });
+            // 13枚を先にアペンド
+            normalTiles.forEach(node => row.appendChild(node));
+            // ツモ牌を最後にアペンド
+            if (tsumoTileNode) row.appendChild(tsumoTileNode);
+          } else {
+            hand.forEach((t, i) => {
+              const img = document.createElement('img');
+              img.className = 'tile clickable';
+              img.setAttribute('data-player', 0);
+              img.setAttribute('data-index', i);
+              img.src = '/static/tiles/' + t + '.png';
+              img.alt = t;
+              img.onerror = function() { handleImageError(this, t); };
+              row.appendChild(img);
+            });
+            console.log('Player 0: rendered 14-tile layout');
+          }
+        } else {
+          const hand = hands[p];
+          for (let i = 0; i < hand.length; ++i) {
+            const img = document.createElement('img');
+            img.className = 'tile opponent-tile';
+            img.setAttribute('data-player', p);
+            img.setAttribute('data-index', i);
+            img.src = '/static/tiles/ura.png';
+            img.alt = 'ura';
+            row.appendChild(img);
+          }
+        }
+        
+        const shantenSpan = document.getElementById('shanten-' + p);
+        if (shantenSpan) {
+          shantenSpan.innerText = (shantenList && shantenList[p] !== undefined) ? shantenList[p] : '?';
+        }
+      }
+    }
+
+    function updateDiscards(data, auto_log) {
+      if (data.discarded_tile !== undefined) {
+        discards[0].push(data.discarded_tile);
+        renderDiscards(0);
+      }
+      if (auto_log) {
+        auto_log.forEach(log => {
+          discards[log.player].push(log.discarded);
+          renderDiscards(log.player);
+        });
+      }
+    }
+
+    function renderDiscards(player) {
+      let div = document.getElementById('discards-' + player);
+      if (!div) return;
+      div.innerHTML = '';
+      discards[player].forEach(t => {
+        const img = document.createElement('img');
+        img.src = '/static/tiles/' + t + '.png';
+        img.alt = t;
+        img.onerror = function() { handleImageError(this, t); };
+        div.appendChild(img);
+      });
+    }
+
+    // 初期化
+    if (document.querySelectorAll('#tiles-row-0 .tile.clickable').length > 0) {
+      setTileClickHandlers();
+      updateAgariButton(); // 初期化時にもボタンの色を判定させる
+    }
+  </script>
+</body>
+</html>

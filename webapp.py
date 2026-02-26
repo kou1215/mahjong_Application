@@ -41,10 +41,15 @@ def reset():
 	return redirect(url_for('index'))
 
 
-@app.route('/', methods=['GET', 'POST'])
-def index():
-	hands_view = None
 
+# トップページ（待機室）
+@app.route('/', methods=['GET'])
+def index():
+	return render_template('index.html')
+
+# 対局画面
+@app.route('/game', methods=['GET', 'POST'])
+def game():
 	# ゲーム状態を取得または新規作成
 	game = get_game_from_session()
 	if game is None:
@@ -65,7 +70,7 @@ def index():
 		})
 
 	return render_template(
-		'index.html',
+		'game.html',
 		turns=0,
 		hands_view=hands_view,
 		dora_indicator=game.dora_indicator,

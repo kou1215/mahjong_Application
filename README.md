@@ -22,7 +22,7 @@
   - **[models/tile_utils.py](models/tile_utils.py)**: 牌の表現、変換、ユーティリティ関数。
 
 - **[templates/](templates/)**: ウェブ用テンプレートを格納。
-  - **[templates/index.html](templates/index.html)**: ウェブUI のエントリページ。
+  - **[templates/game.html](templates/game.html)**: ウェブUI のエントリページ。
 
 - **[static/](static/)**: 静的リソース（CSS、画像タイルなど）。
   - **[static/styles.css](static/styles.css)**: サイト全体のスタイル定義。
