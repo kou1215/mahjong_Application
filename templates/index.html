@@ -165,13 +165,26 @@
       });
     }
 
-    async function discardTile(idx) {
-      const formData = new FormData();
-      formData.append('discard_index', idx);
-      const res = await fetch('/discard', { method: 'POST', body: formData });
-      if (!res.ok) {
-        alert('エラー: ' + (await res.text()));
-        return;
+    // アガり形判定でボタン色を更新
+    function updateAgariButton() {
+      const button = document.getElementById('agari-button');
+      if (!button) return;
+      
+      // Player 0 のシャンテン数を取得
+      const shanten = window.shantenValues ? window.shantenValues[0] : null;
+      
+      if (shanten === -1) {
+        // アガり形：ボタンを目立つ色（オレンジ系）に変更
+        button.style.background = '#FF6B35';
+        button.title = 'アガり形です！';
+      } else if (shanten === 0) {
+        // テンパイ：ボタンを注意色に
+        button.style.background = '#FFB703';
+        button.title = 'テンパイしています';
+      } else {
+        // 通常状態：緑
+        button.style.background = '#4CAF50';
+        button.title = '';
       }
       
       const data = await res.json();
@@ -203,7 +216,6 @@
           doraImg.onerror = function() { handleImageError(this, data.dora_indicator); };
           doraImgArea.appendChild(doraImg);
         }
-      }
 
       if (typeof data.remaining_draws !== 'undefined') {
         const drawsElem = document.getElementById('remaining-draws-count');
@@ -248,14 +260,20 @@
     }
 
     function updateHands(hands, shantenList) {
+      console.log('updateHands called with:', hands.length, 'players');
       for (let p = 0; p < hands.length; ++p) {
         const row = document.getElementById('tiles-row-' + p);
-        if (!row) continue;
+        if (!row) {
+          console.warn('tiles-row-' + p + ' not found');
+          continue;
+        }
         row.innerHTML = '';
         
         if (p === 0) {
           const hand = hands[0];
           const drawTile = window.player0_draw;
+          console.log('Player 0: drawTile =', drawTile, ', hand =', hand);
+          
           if (hand.length === 14 && drawTile) {
             const drawIdx = hand.lastIndexOf(drawTile); // 重複牌がある場合を考慮し最後をツモ牌とする
             let normalTiles = [];
@@ -290,6 +308,7 @@
               img.onerror = function() { handleImageError(this, t); };
               row.appendChild(img);
             });
+            console.log('Player 0: rendered 14-tile layout');
           }
         } else {
           const hand = hands[p];

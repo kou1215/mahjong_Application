@@ -8,12 +8,15 @@ from mahjong.tile import TilesConverter
 from mahjong.hand_calculating.hand import HandCalculator
 from mahjong.hand_calculating.hand_config import HandConfig
 from mahjong.meld import Meld
+from mahjong.constants import EAST, SOUTH, WEST, NORTH
 
 from models.tile_utils import TILE_INDEX
 
 
 class AgariChecker:
     """アガり判定と手数計算のラッパークラス"""
+    
+    # 風は mahjong.constants の EAST/SOUTH/WEST/NORTH を使用する
 
     def __init__(self):
         """初期化"""
@@ -47,9 +50,14 @@ class AgariChecker:
         is_tsumo: bool = True,
         is_dealer: bool = False,
         melds: Optional[List[Meld]] = None,
+        player_wind: int = EAST,
+        round_wind: int = EAST,
+        dora_indicators: Optional[List[str]] = None,
     ) -> Optional[Dict[str, Any]]:
         """
         アガり手の点数を計算
+        
+        自風・場風・ドラを考慮した詳細な点数計算を行う
         
         Args:
             hand_tiles: 手牌のリスト（14枚）
@@ -57,6 +65,9 @@ class AgariChecker:
             is_tsumo: ツモ和了かどうかのフラグ
             is_dealer: 親かどうかのフラグ
             melds: 鳴きのリスト
+            player_wind: 自風（1:東, 2:南, 3:西, 4:北）
+            round_wind: 場風（1:東, 2:南, 3:西, 4:北）
+            dora_indicators: ドラ表示牌のリスト（例：['5m', '1p']）
         
         Returns:
             {
@@ -65,11 +76,15 @@ class AgariChecker:
                 'han': int,
                 'fu': int,
                 'cost': {
-                    'main': int,  # 総支払い金額
-                    'payment': Optional[str],  # 支払い形式の説明
+                    'main': int,          # 総支払い金額
+                    'main_bonus': int,    # 親／子のボーナス
+                    'additional': int,    # 追加支払い
+                    'additional_bonus': int,
+                    'kyoutaku_bonus': int,
+                    'total': int
                 },
-                'limit': str,  # 満貫、跳満など
-                'yaku': List[str],  # 役のリスト
+                'limit': str,             # 満貫、跳満など
+                'yaku': List[str],        # 成立した役のリスト
             }
         """
         if len(hand_tiles) != 14:
@@ -86,9 +101,11 @@ class AgariChecker:
         try:
             # タイル情報の変換
             tiles_136 = self._tiles_to_136_array(hand_tiles)
-            win_tile_136_list = TilesConverter.one_line_string_to_136_array(win_tile)
-            
-            if not tiles_136 or not win_tile_136_list:
+            # アガり牌は convert_tile_to_136 で正規化（英文字字牌にも対応）
+            win_tile_136 = self.convert_tile_to_136(win_tile)
+
+            # 変換に失敗した場合は invalid
+            if not tiles_136 or win_tile_136 == 0:
                 return {
                     'valid': False,
                     'error': 'タイル形式が無効です',
@@ -98,19 +115,28 @@ class AgariChecker:
                     'limit': 'なし',
                     'yaku': [],
                 }
-
-            win_tile_136 = win_tile_136_list[0]
             
-            # HandConfig を設定
-            config = HandConfig(is_tsumo=is_tsumo)
+            # HandConfig を設定（player_wind/round_wind は HandConfig に渡す）
+            config = HandConfig(is_tsumo=is_tsumo, player_wind=player_wind, round_wind=round_wind)
             config.is_dealer = is_dealer
+
+            # ドラ表示牌を136形式に変換して渡す
+            # ドラ表示牌のリストを136配列に変換（複数の牌に対応）
+            dora_136 = []
+            if dora_indicators:
+                for ind in dora_indicators:
+                    idx = self.convert_tile_to_136(ind)
+                    if idx:
+                        dora_136.append(idx)
             
             # Melds が指定されていない場合は空リストを使用
             if melds is None:
                 melds = []
 
             # 手数を計算
-            result = self.calculator.estimate_hand_value(tiles_136, win_tile_136, melds=melds, config=config)
+            result = self.calculator.estimate_hand_value(
+                tiles_136, win_tile_136, melds=melds, dora_indicators=dora_136, config=config
+            )
 
             # 結果を整形
             # limit を翻数から判定
@@ -121,7 +147,7 @@ class AgariChecker:
                 'error': result.error,
                 'han': result.han,
                 'fu': result.fu,
-                'cost': {'main': result.cost['main'], 'total': result.cost['total']},
+                'cost': result.cost,  # 詳細な支払い情報をそのまま返す
                 'limit': limit,
                 'yaku': [yaku.name for yaku in result.yaku],
             }
@@ -184,14 +210,22 @@ class AgariChecker:
         """
         単一の牌を136形式に変換（最初のコピーを返す）
         
+        字牌は英文字表記または数字表記両方に対応します。
+        mahjongライブラリの converter は英文字単独を受け付けないため
+        数字表記 (1z-7z) に正規化してから変換します。
+        
         Args:
-            tile: 牌（例：'1m', 'E'）
+            tile: 牌（例：'1m', 'E', 'P', '1z'）
         
         Returns:
             136形式のインデックス
         """
+        # 英文字字牌を数字表記に変換
+        z_map = {'E': '1z', 'S': '2z', 'W': '3z', 'N': '4z',
+                 'P': '5z', 'F': '6z', 'C': '7z'}
+        tile_norm = z_map.get(tile, tile)
         try:
-            result = TilesConverter.one_line_string_to_136_array(tile)
+            result = TilesConverter.one_line_string_to_136_array(tile_norm)
             return result[0] if result else 0
         except Exception:
             return 0
