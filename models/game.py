@@ -31,7 +31,12 @@ class Game:
 		self.is_game_over = False
 		self._agari_checker = AgariChecker()
 		self._call_checker = CallChecker()
+		self.last_discarded: Optional[str] = None
 		self._initialize_players()
+		# 鳴き判定用の状態
+		self.current_discarder_id: Optional[int] = None
+		self.current_candidates: List[int] = []
+		self.current_candidate_idx: int = 0
 
 	def _initialize_players(self) -> None:
 		"""プレイヤーを初期化"""
@@ -80,42 +85,274 @@ class Game:
 		Returns:
 			ターン処理結果の辞書
 		"""
+		# 初期の捨て牌（通常は人間の捨て）
 		current_player = self.players[self.human_player_id]
-		
 		if discard_index < 0 or discard_index >= len(current_player.hand):
 			raise ValueError(f"Invalid discard index: {discard_index}")
 
-		# 人間プレイヤーが捨てる
+		# perform discard
 		discarded_tile = current_player.discard_tile(discard_index)
+		self.last_discarded = discarded_tile
+		self.current_discarder_id = current_player.player_id
+		# build candidate list (next players in turn order)
+		candidates = []
+		for i in range(1, self.num_players):
+			pid = (self.current_discarder_id + i) % self.num_players
+			candidates.append(pid)
+		self.current_candidates = candidates
+		self.current_candidate_idx = 0
 
-		# 次のプレイヤーから human_player_id までのAIターンを処理
-		ai_log = []
-		current_p_id = self.human_player_id
-		
+		# 1) Check ron across all candidates
+		for pid in candidates:
+			if self._call_checker.can_ron(self.players[pid].hand.to_list(), self.last_discarded, self._agari_checker):
+				# if human, return for front-end decision
+				if pid == self.human_player_id:
+					calls = self.check_available_calls(pid, self.last_discarded)
+					calls['can_ron'] = True
+					self.current_candidate_idx = candidates.index(pid)
+					return {'discarded_tile': self.last_discarded, 'available_calls': [{'player_id': pid, 'calls': calls, 'chow_combos': []}], 'awaiting_human': True}
+				# AI auto-ron
+				value = self.estimate_agari_value(pid, self.last_discarded, is_tsumo=False)
+				self.is_game_over = True
+				return {'agari': True, 'type': 'ron', 'player_id': pid, 'win_tile': self.last_discarded, 'value': value}
+
+		# 2) Sequentially check kan/pong for each candidate in order
+		for idx, pid in enumerate(candidates):
+			# check kan
+			if self._call_checker.can_kan(self.players[pid].hand.to_list(), self.last_discarded):
+				# human: present options
+				if pid == self.human_player_id:
+					calls = self.check_available_calls(pid, self.last_discarded)
+					calls['can_kan'] = True
+					self.current_candidate_idx = idx
+					return {'discarded_tile': self.last_discarded, 'available_calls': [{'player_id': pid, 'calls': calls, 'chow_combos': []}], 'awaiting_human': True}
+				# AI: auto kan
+				ok = self.apply_kan(pid, self.last_discarded, is_closed=False)
+				if ok:
+					# AI should immediately discard
+					caller = self.players[pid]
+					if caller.is_ai:
+						discard_idx = caller.choose_discard()
+						discarded = caller.discard_tile(discard_idx)
+						self.last_discarded = discarded
+						# start new call sequence from this new discard
+						return self.process_discard_auto_from(pid)
+
+			# check pong
+			if self._call_checker.can_pong(self.players[pid].hand.to_list(), self.last_discarded):
+				if pid == self.human_player_id:
+					calls = self.check_available_calls(pid, self.last_discarded)
+					calls['can_pong'] = True
+					self.current_candidate_idx = idx
+					return {'discarded_tile': self.last_discarded, 'available_calls': [{'player_id': pid, 'calls': calls, 'chow_combos': []}], 'awaiting_human': True}
+				# AI pong
+				ok = self.apply_pong(pid, [self.last_discarded]*3)
+				if ok:
+					caller = self.players[pid]
+					if caller.is_ai:
+						discard_idx = caller.choose_discard()
+						discarded = caller.discard_tile(discard_idx)
+						self.last_discarded = discarded
+						return self.process_discard_auto_from(pid)
+
+		# 3) Check chow only for next player
+		next_player = candidates[0]
+		if self._call_checker.can_chow(self.players[next_player].hand.to_list(), self.last_discarded):
+			if next_player == self.human_player_id:
+				calls = self.check_available_calls(next_player, self.last_discarded)
+				calls['can_chow'] = True
+				self.current_candidate_idx = 0
+				return {'discarded_tile': self.last_discarded, 'available_calls': [{'player_id': next_player, 'calls': calls, 'chow_combos': self.find_chow_combinations(next_player, self.last_discarded)}], 'awaiting_human': True}
+			# AI chow
+			combos = self.find_chow_combinations(next_player, self.last_discarded)
+			if combos:
+				ok = self.apply_chow(next_player, combos[0])
+				if ok:
+					caller = self.players[next_player]
+					if caller.is_ai:
+						discard_idx = caller.choose_discard()
+						discarded = caller.discard_tile(discard_idx)
+						self.last_discarded = discarded
+						return self.process_discard_auto_from(next_player)
+
+		# nobody called: advance normal turn to next player (the one after discarder)
+		next_turn = (self.current_discarder_id + 1) % self.num_players
+		self.current_turn = next_turn
+		# draw for next player if wall
+		if not self.wall:
+			self.is_game_over = True
+			return {'discarded_tile': self.last_discarded, 'available_calls': [], 'player0_draw': None, 'auto_log': []}
+		drawn = self.wall.pop()
+		self.players[next_turn].add_tile(drawn)
+		# return info so frontend can update
+		return {'discarded_tile': self.last_discarded, 'available_calls': [], 'player0_draw': drawn, 'auto_log': []}
 
 
-		# AI プレイヤーのターン処理（プレイヤー1, 2, 3）
-		for _ in range(self.num_players - 1):
-			current_p_id = (current_p_id + 1) % self.num_players
+	def process_discard_auto_from(self, discarder_id: int) -> Dict[str, Any]:
+		"""
+		Helper called when an AI has claimed and then discarded: continue processing from that new discard.
+		"""
+		candidates = []
+		for i in range(1, self.num_players):
+			pid = (discarder_id + i) % self.num_players
+			candidates.append(pid)
+		# check ron
+		for pid in candidates:
+			if self._call_checker.can_ron(self.players[pid].hand.to_list(), self.last_discarded, self._agari_checker):
+				value = self.estimate_agari_value(pid, self.last_discarded, is_tsumo=False)
+				self.is_game_over = True
+				return {'agari': True, 'type': 'ron', 'player_id': pid, 'win_tile': self.last_discarded, 'value': value}
+		# check kan/pong sequentially
+		for pid in candidates:
+			if self._call_checker.can_kan(self.players[pid].hand.to_list(), self.last_discarded):
+				ok = self.apply_kan(pid, self.last_discarded, is_closed=False)
+				if ok:
+					caller = self.players[pid]
+					if caller.is_ai:
+						discard_idx = caller.choose_discard()
+						discarded = caller.discard_tile(discard_idx)
+						self.last_discarded = discarded
+						return self.process_discard_auto_from(pid)
+			if self._call_checker.can_pong(self.players[pid].hand.to_list(), self.last_discarded):
+				ok = self.apply_pong(pid, [self.last_discarded]*3)
+				if ok:
+					caller = self.players[pid]
+					if caller.is_ai:
+						discard_idx = caller.choose_discard()
+						discarded = caller.discard_tile(discard_idx)
+						self.last_discarded = discarded
+						return self.process_discard_auto_from(pid)
+		# check chow for next player
+		next_player = candidates[0]
+		if self._call_checker.can_chow(self.players[next_player].hand.to_list(), self.last_discarded):
+			combos = self.find_chow_combinations(next_player, self.last_discarded)
+			if combos:
+				ok = self.apply_chow(next_player, combos[0])
+				if ok:
+					caller = self.players[next_player]
+					if caller.is_ai:
+						discard_idx = caller.choose_discard()
+						discarded = caller.discard_tile(discard_idx)
+						self.last_discarded = discarded
+						return self.process_discard_auto_from(next_player)
+		# nobody called: advance
+		next_turn = (discarder_id + 1) % self.num_players
+		self.current_turn = next_turn
+		if not self.wall:
+			self.is_game_over = True
+			return {'discarded_tile': self.last_discarded, 'available_calls': [], 'player0_draw': None, 'auto_log': []}
+		drawn = self.wall.pop()
+		self.players[next_turn].add_tile(drawn)
+		return {'discarded_tile': self.last_discarded, 'available_calls': [], 'player0_draw': drawn, 'auto_log': []}
 
-			# ツモ前に山札チェック
+	def continue_call_sequence(self) -> Dict[str, Any]:
+		"""Continue the call sequence after a human 'pass'. Uses stored current_candidates and current_candidate_idx."""
+		if not self.current_candidates:
+			return {'discarded_tile': self.last_discarded, 'available_calls': [], 'player0_draw': None}
+		start = self.current_candidate_idx + 1
+		candidates = self.current_candidates
+		# check remaining candidates for ron first
+		for pid in candidates[start:]:
+			if self._call_checker.can_ron(self.players[pid].hand.to_list(), self.last_discarded, self._agari_checker):
+				if pid == self.human_player_id:
+					calls = self.check_available_calls(pid, self.last_discarded)
+					calls['can_ron'] = True
+					self.current_candidate_idx = candidates.index(pid)
+					return {'discarded_tile': self.last_discarded, 'available_calls': [{'player_id': pid, 'calls': calls, 'chow_combos': []}], 'awaiting_human': True}
+				value = self.estimate_agari_value(pid, self.last_discarded, is_tsumo=False)
+				self.is_game_over = True
+				return {'agari': True, 'type': 'ron', 'player_id': pid, 'win_tile': self.last_discarded, 'value': value}
+
+		# then sequentially check kan/pong
+		for idx in range(start, len(candidates)):
+			pid = candidates[idx]
+			if self._call_checker.can_kan(self.players[pid].hand.to_list(), self.last_discarded):
+				if pid == self.human_player_id:
+					calls = self.check_available_calls(pid, self.last_discarded)
+					calls['can_kan'] = True
+					self.current_candidate_idx = idx
+					return {'discarded_tile': self.last_discarded, 'available_calls': [{'player_id': pid, 'calls': calls, 'chow_combos': []}], 'awaiting_human': True}
+				ok = self.apply_kan(pid, self.last_discarded, is_closed=False)
+				if ok:
+					caller = self.players[pid]
+					if caller.is_ai:
+						discard_idx = caller.choose_discard()
+						discarded = caller.discard_tile(discard_idx)
+						self.last_discarded = discarded
+						return self.process_discard_auto_from(pid)
+
+			if self._call_checker.can_pong(self.players[pid].hand.to_list(), self.last_discarded):
+				if pid == self.human_player_id:
+					calls = self.check_available_calls(pid, self.last_discarded)
+					calls['can_pong'] = True
+					self.current_candidate_idx = idx
+					return {'discarded_tile': self.last_discarded, 'available_calls': [{'player_id': pid, 'calls': calls, 'chow_combos': []}], 'awaiting_human': True}
+				ok = self.apply_pong(pid, [self.last_discarded]*3)
+				if ok:
+					caller = self.players[pid]
+					if caller.is_ai:
+						discard_idx = caller.choose_discard()
+						discarded = caller.discard_tile(discard_idx)
+						self.last_discarded = discarded
+						return self.process_discard_auto_from(pid)
+
+		# if we reach the end, check chow for next player if not already checked
+		# next player is candidates[0]
+		next_player = candidates[0]
+		if self._call_checker.can_chow(self.players[next_player].hand.to_list(), self.last_discarded):
+			if next_player == self.human_player_id:
+				calls = self.check_available_calls(next_player, self.last_discarded)
+				calls['can_chow'] = True
+				self.current_candidate_idx = 0
+				return {'discarded_tile': self.last_discarded, 'available_calls': [{'player_id': next_player, 'calls': calls, 'chow_combos': self.find_chow_combinations(next_player, self.last_discarded)}], 'awaiting_human': True}
+			combos = self.find_chow_combinations(next_player, self.last_discarded)
+			if combos:
+				ok = self.apply_chow(next_player, combos[0])
+				if ok:
+					caller = self.players[next_player]
+					if caller.is_ai:
+						discard_idx = caller.choose_discard()
+						discarded = caller.discard_tile(discard_idx)
+						self.last_discarded = discarded
+						return self.process_discard_auto_from(next_player)
+
+		# nobody claimed -> advance to next player's draw
+		next_turn = (self.current_discarder_id + 1) % self.num_players
+		self.current_turn = next_turn
+		if not self.wall:
+			self.is_game_over = True
+			return {'discarded_tile': self.last_discarded, 'available_calls': [], 'player0_draw': None, 'auto_log': []}
+		drawn = self.wall.pop()
+		self.players[next_turn].add_tile(drawn)
+		return {'discarded_tile': self.last_discarded, 'available_calls': [], 'player0_draw': drawn, 'auto_log': []}
+				self.players[self.human_player_id].add_tile(player0_draw)
+
+			# ターン数を進める
+			self.current_turn += 1
+
+			# ゲーム終了判定
 			if not self.wall:
 				self.is_game_over = True
-				break
-			# ツモ
-			drawn = self.wall.pop()
-			self.players[current_p_id].add_tile(drawn)
 
-			# AI プレイヤーが捨てる
-			player = self.players[current_p_id]
-			discard_idx = player.choose_discard()
-			discarded = player.discard_tile(discard_idx)
-			ai_log.append({
-				'player': current_p_id,
-				'discarded': discarded,
-				'drawn': drawn,
-				'shanten': player.get_shanten(),
-			})
+			return {
+				'discarded_tile': discarded_tile,
+				'drawn_tile': None,
+				'player0_draw': player0_draw,
+				'auto_log': ai_log,
+				'wall_count': len(self.wall),
+				'is_game_over': self.is_game_over,
+				'remaining_draws': max(len(self.wall), 0),
+			}
+
+		# 鳴きがあった場合はそのログと最新のlast_discarded情報を返す
+		return {
+			'discarded_tile': discarded_tile,
+			'last_discarded': self.last_discarded,
+			'auto_log': auto_log,
+			'wall_count': len(self.wall),
+			'is_game_over': self.is_game_over,
+			'remaining_draws': max(len(self.wall), 0),
+		}
 
 		# 人間プレイヤー（Player 0）のツモ（ターン終了時）
 		player0_draw = None
@@ -291,6 +528,41 @@ class Game:
 			'can_ron': can_ron,
 		}
 
+	def apply_kan(self, player_id: int, tile: str, is_closed: bool = False) -> bool:
+		"""
+		プレイヤーがカンを実行する。明槓（捨て牌利用）は is_closed=False。
+
+		Args:
+			player_id: プレイヤーID
+			tile: カンに使う牌（文字列）
+			is_closed: 暗槓か
+
+		Returns:
+			成功なら True
+		"""
+		if player_id < 0 or player_id >= len(self.players):
+			return False
+
+		player = self.players[player_id]
+
+		# 明槓の場合は最後の捨て牌が対象であるべき
+		if not is_closed and self.last_discarded != tile:
+			return False
+
+		ok = player.call_kan(tile, is_closed=is_closed)
+		if ok:
+			# 明槓なら捨て牌は場から消費済み（last_discarded をクリア）
+			if not is_closed:
+				self.last_discarded = None
+			# カンをしたプレイヤーに番が移る
+			self.current_turn = player_id
+			# 補充牌を1枚ツモさせる（山があれば）
+			if self.wall:
+				repl = self.wall.pop()
+				player.add_tile(repl)
+				# 補充牌は process_discard の auto_log で追記される
+		return ok
+
 	def find_pong_combinations(self, player_id: int, discarded_tile: str) -> List[List[str]]:
 		"""
 		ポンの組み合わせを検出
@@ -347,7 +619,13 @@ class Game:
 		if player_id < 0 or player_id >= len(self.players):
 			return False
 		
-		return self.players[player_id].call_pong(tiles)
+		ok = self.players[player_id].call_pong(tiles)
+		if ok:
+			# the discarded tile has been claimed
+			self.last_discarded = None
+			# turn moves to caller
+			self.current_turn = player_id
+		return ok
 
 	def apply_chow(self, player_id: int, tiles: List[str]) -> bool:
 		"""
@@ -363,7 +641,11 @@ class Game:
 		if player_id < 0 or player_id >= len(self.players):
 			return False
 		
-		return self.players[player_id].call_chow(tiles)
+		ok = self.players[player_id].call_chow(tiles)
+		if ok:
+			self.last_discarded = None
+			self.current_turn = player_id
+		return ok
 
 	def check_ron(self, player_id: int, discarded_tile: str) -> Dict[str, Any]:
 		"""

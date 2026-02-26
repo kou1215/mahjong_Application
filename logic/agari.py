@@ -306,3 +306,59 @@ class AgariChecker:
                 result.append(''.join(suit_map[suit]) + suit)
         
         return ''.join(result)
+
+    def make_tenpai_with_next_win(self, hand_tiles: List[str]):
+        """
+        テスト用ユーティリティ。
+
+        与えられた手牌（13枚想定）をほとんど影響を与えずに1枚だけ差し替えて
+        『次に来る牌がアガリ牌になる（テンパイ状態）』となる手にする。
+
+        戻す際に影響が少なくなるよう、差し替えたインデックスと元の牌を返す。
+
+        Args:
+            hand_tiles: 元の手牌のリスト（通常13枚）
+
+        Returns:
+            (new_hand, win_tile, revert_info) を返す。
+            - new_hand: 変更後の手牌（13枚）
+            - win_tile: その手牌に加えるとアガリになる牌文字列
+            - revert_info: {'index': int, 'original': str, 'removed': Optional[str]}
+              - index: 差し替えた位置
+              - original: その位置に元々あった牌
+              - removed: 入力が14枚で末尾から取り除いた牌があればその牌（None なら無し）
+
+        注意: 入力手牌は変更しない（コピーを返す）。見つからない場合は (None, None, None) を返す。
+        """
+        # コピーして破壊的変更を避ける
+        if not hand_tiles:
+            return None, None, None
+
+        hand = list(hand_tiles)
+        removed = None
+        # 14枚渡されている場合は末尾を一時的に取り除く（影響を小さくするため）
+        if len(hand) == 14:
+            removed = hand.pop()
+
+        if len(hand) != 13:
+            return None, None, None
+
+        # 全ての牌種を試す（TILE_INDEX のキー）
+        tile_types = list(TILE_INDEX.keys())
+
+        for i in range(len(hand)):
+            original = hand[i]
+            for cand in tile_types:
+                if cand == original:
+                    continue
+                tmp_hand = hand.copy()
+                tmp_hand[i] = cand
+                # その手にどの牌を足すとアガリになるか確認
+                for win_cand in tile_types:
+                    test_hand = tmp_hand + [win_cand]
+                    if self.is_agari(test_hand):
+                        revert_info = {'index': i, 'original': original, 'removed': removed}
+                        return tmp_hand, win_cand, revert_info
+
+        # 見つからなかった
+        return None, None, None

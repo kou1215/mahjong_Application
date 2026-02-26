@@ -91,7 +91,7 @@
           <div class="opponent-label">Player 3</div>
           <div class="tiles-row opponent-tiles" id="tiles-row-3">
             {% for t in hands_view[3].tiles %}
-              <img class="tile opponent-tile" data-player="3" data-index="{{ loop.index0 }}" src="{{ url_for('static', filename='tiles/ura.png') }}" alt="ura">
+              <img class="tile opponent-tile" data-player="3" data-index="{{ loop.index0 }}" src="{{ url_for('static', filename='tiles/' + t + '.png') }}" alt="{{ t }}" onerror="handleImageError(this, '{{ t }}')">
             {% endfor %}
           </div>
           <div class="discards" id="discards-3"></div>
@@ -100,7 +100,7 @@
           <div class="opponent-label">Player 2</div>
           <div class="tiles-row opponent-tiles" id="tiles-row-2">
             {% for t in hands_view[2].tiles %}
-              <img class="tile opponent-tile" data-player="2" data-index="{{ loop.index0 }}" src="{{ url_for('static', filename='tiles/ura.png') }}" alt="ura">
+              <img class="tile opponent-tile" data-player="2" data-index="{{ loop.index0 }}" src="{{ url_for('static', filename='tiles/' + t + '.png') }}" alt="{{ t }}" onerror="handleImageError(this, '{{ t }}')">
             {% endfor %}
           </div>
           <div class="discards" id="discards-2"></div>
@@ -109,7 +109,7 @@
           <div class="opponent-label">Player 1</div>
           <div class="tiles-row opponent-tiles" id="tiles-row-1">
             {% for t in hands_view[1].tiles %}
-              <img class="tile opponent-tile" data-player="1" data-index="{{ loop.index0 }}" src="{{ url_for('static', filename='tiles/ura.png') }}" alt="ura">
+              <img class="tile opponent-tile" data-player="1" data-index="{{ loop.index0 }}" src="{{ url_for('static', filename='tiles/' + t + '.png') }}" alt="{{ t }}" onerror="handleImageError(this, '{{ t }}')">
             {% endfor %}
           </div>
           <div class="discards" id="discards-1"></div>
@@ -122,16 +122,19 @@
     </div>
 
     <div id="my-area">
+      {# Template block #}
       {% if hands_view %}
-        {% if hands_view[0] %}
-           <div class="my-label">あなた (Player 0)</div>
+          {% if hands_view[0] %}
+             <div class="my-label">あなた (Player 0)</div>
           <div class="discards" id="discards-0"></div>
+          <div id="melds-display-area" style="margin-bottom:12px;"></div>
           <div class="tiles-row my-tiles" id="tiles-row-0">
             {% for t in hands_view[0].tiles %}
               <img class="tile clickable" data-player="0" data-index="{{ loop.index0 }}" src="{{ url_for('static', filename='tiles/' + t + '.png') }}" alt="{{ t }}">
             {% endfor %}
           </div>
           <button type="button" id="agari-btn" onclick="checkAgari()">🎯 アガり判定</button>
+          <div id="available-calls-area" style="margin-top:12px;"></div>
         {% endif %}
       {% endif %}
     </div>
@@ -145,7 +148,11 @@
       }
     }
 
+    {% if hands_view %}
+    const discards = {{ hands_view | map(attribute='discards') | list | tojson }};
+    {% else %}
     const discards = [[], [], [], []];
+    {% endif %}
     let lastDrawnTile = null;
     window.player0_draw = null;
 
@@ -202,11 +209,16 @@
       window.player0_draw = data.player0_draw;
       window.shantenValues = data.shanten_list;
       lastDrawnTile = data.player0_draw;
-      
+
+      // if there are available calls show UI
+      if (data.available_calls && data.available_calls.length > 0) {
+        renderAvailableCalls(data.available_calls, data.discarded_tile);
+      }
+
       updateHands(data.hands, data.shanten_list);
       updateDiscards(data, data.auto_log);
 
-      // 手牌が更新されたらボタンの色も更新
+      // update UI
       updateAgariButton();
 
       const doraImgArea = document.getElementById('dora-indicator-area');
@@ -243,6 +255,112 @@
       } else {
         setTileClickHandlers();
       }
+    }
+
+    function renderAvailableCalls(availableCalls, discardedTile) {
+      const area = document.getElementById('available-calls-area');
+      area.innerHTML = '';
+      const title = document.createElement('div');
+      title.innerText = '鳴き可能: 最近の捨て牌 ' + (discardedTile || '');
+      area.appendChild(title);
+
+      availableCalls.forEach(entry => {
+        const pid = entry.player_id;
+        const calls = entry.calls;
+        const box = document.createElement('div');
+        box.style.margin = '6px 0';
+        box.style.padding = '6px';
+        box.style.background = 'rgba(255,255,255,0.05)';
+        box.style.borderRadius = '6px';
+        const label = document.createElement('strong');
+        label.innerText = 'Player ' + pid + ':';
+        box.appendChild(label);
+
+        // Pong
+        if (calls.can_pong) {
+          const b = document.createElement('button');
+          b.innerText = 'ポン';
+          b.onclick = () => applyCall(pid, 'pong', [discardedTile]);
+          box.appendChild(b);
+        }
+
+        // Chow: show combos if available
+        if (calls.can_chow && entry.chow_combos && entry.chow_combos.length > 0) {
+          entry.chow_combos.forEach(combo => {
+            const cb = document.createElement('button');
+            cb.innerText = 'チー ' + combo.join(' ');
+            cb.onclick = () => applyCall(pid, 'chow', combo);
+            box.appendChild(cb);
+          });
+        }
+
+        // Kan
+        if (calls.can_kan) {
+          const kb = document.createElement('button');
+          kb.innerText = 'カン';
+          kb.onclick = () => applyCall(pid, 'kan', [discardedTile]);
+          box.appendChild(kb);
+        }
+
+        // Ron
+        if (calls.can_ron) {
+          const rb = document.createElement('button');
+          rb.innerText = 'ロン';
+          rb.onclick = () => applyCall(pid, 'ron', [discardedTile]);
+          box.appendChild(rb);
+        }
+
+        // Pass
+        // Pass button removed for simplification
+
+        area.appendChild(box);
+      });
+    }
+
+    async function applyCall(player_id, action, tiles) {
+      const res = await fetch('/apply_call', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ player_id: player_id, action: action, tiles: tiles })
+      });
+      if (!res.ok) {
+        alert('鳴き実行エラー: ' + (await res.text()));
+        return;
+      }
+      const data = await res.json();
+        // 操作後はページをリロードして状態を反映
+        location.reload();
+    }
+    
+      function displayMelds(melds) {
+      const area = document.getElementById('melds-display-area');
+      area.innerHTML = '';
+      
+      const title = document.createElement('div');
+      title.innerText = '副露:';
+      title.style.fontWeight = 'bold';
+      title.style.marginBottom = '6px';
+      area.appendChild(title);
+      
+      melds.forEach(meld => {
+        const box = document.createElement('div');
+        box.style.display = 'flex';
+        box.style.gap = '4px';
+        box.style.marginBottom = '4px';
+        
+        meld.forEach(tile => {
+          const img = document.createElement('img');
+          img.className = 'tile';
+          img.style.width = '40px';
+          img.style.height = '50px';
+          img.src = '/static/tiles/' + tile + '.png';
+          img.alt = tile;
+          img.onerror = function() { handleImageError(this, tile); };
+          box.appendChild(img);
+        });
+        
+        area.appendChild(box);
+      });
     }
 
     async function checkAgari() {
@@ -328,12 +446,14 @@
         } else {
           const hand = hands[p];
           for (let i = 0; i < hand.length; ++i) {
+            const t = hand[i];
             const img = document.createElement('img');
             img.className = 'tile opponent-tile';
             img.setAttribute('data-player', p);
             img.setAttribute('data-index', i);
-            img.src = '/static/tiles/ura.png';
-            img.alt = 'ura';
+            img.src = '/static/tiles/' + t + '.png';
+            img.alt = t;
+            img.onerror = function() { handleImageError(this, t); };
             row.appendChild(img);
           }
         }
@@ -375,6 +495,11 @@
     if (document.querySelectorAll('#tiles-row-0 .tile.clickable').length > 0) {
       setTileClickHandlers();
       updateAgariButton(); // 初期化時にもボタンの色を判定させる
+    }
+
+    // 初期捨て牌を表示
+    for (let p = 0; p < discards.length; ++p) {
+      renderDiscards(p);
     }
   </script>
 </body>

@@ -123,6 +123,21 @@ class CallChecker:
         return agari_checker.is_agari(ron_hand)
 
     @staticmethod
+    def can_kan(hand_tiles: List[str], discarded_tile: str) -> bool:
+        """
+        カン（捨て牌で明槓）が可能かどうか判定（手持ちに同じ牌が3枚あるか）
+
+        Args:
+            hand_tiles: 自プレイヤーの手牌
+            discarded_tile: 捨てられた牌
+
+        Returns:
+            カンが可能なら True
+        """
+        count = hand_tiles.count(discarded_tile)
+        return count >= 3
+
+    @staticmethod
     def _is_number_tile(tile: str) -> bool:
         """
         数牌（万・筒・索）かどうか判定（字牌は False）

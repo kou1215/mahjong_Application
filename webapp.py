@@ -2,6 +2,7 @@
 from flask import Flask, render_template, request, session, redirect, url_for, jsonify
 from models.game import Game
 from models.tile_utils import format_hand_compact
+from logic.calls import CallChecker
 
 app = Flask(__name__)
 # セッション用のシークレットキー（本番ではより安全な値に）
@@ -62,6 +63,7 @@ def index():
 			'tiles': player.hand.to_list(),
 			'shanten': shanten_val,
 			'compact': format_hand_compact(player.hand.to_list()),
+			'discards': player.discards,
 		})
 
 	return render_template(
@@ -81,13 +83,12 @@ def discard():
 	if game is None:
 		return jsonify({'error': 'No game in progress'}), 400
 
-	# POSTデータからdiscard_indexを取得
+	# Player 0 の捨て牌（他プレイヤーはAI自動）
 	try:
 		discard_index = int(request.form.get('discard_index'))
 	except (TypeError, ValueError):
-		return jsonify({'error': 'Invalid discard index'}), 400
+		return jsonify({'error': 'Invalid parameters'}), 400
 
-	# ターン処理
 	try:
 		result = game.process_discard(discard_index)
 	except ValueError as e:
@@ -98,19 +99,77 @@ def discard():
 
 	# レスポンスを作成
 	response_data = {
-		'discarded_tile': result['discarded_tile'],
-		'drawn_tile': result.get('drawn_tile'),
+		'discarded_tile': result.get('discarded_tile'),
+		'available_calls': result.get('available_calls'),
 		'player0_draw': result.get('player0_draw'),
-		'auto_log': result['auto_log'],
-		'wall_count': result['wall_count'],
-		'is_game_over': result['is_game_over'],
+		'auto_log': result.get('auto_log'),
+		'wall_count': result.get('wall_count', len(game.wall)),
+		'is_game_over': result.get('is_game_over', game.is_game_over),
 		'hands': [p.hand.to_list() for p in game.players],
 		'shanten_list': [p.get_shanten() for p in game.players],
 		'dora_indicator': game.dora_indicator,
-		'remaining_draws': result.get('remaining_draws'),
+		'remaining_draws': result.get('remaining_draws', max(0, len(game.wall))),
 	}
 
 	return jsonify(response_data)
+
+
+@app.route('/check_calls', methods=['POST'])
+def check_calls():
+	"""捨て牌に対する各プレイヤーの鳴き可否を返す（フロントがボタン表示に使用）"""
+	game = get_game_from_session()
+	if game is None:
+		return jsonify({'error': 'No game in progress'}), 400
+
+	discarded = request.json.get('discarded')
+	if not discarded:
+		return jsonify({'error': 'discarded is required'}), 400
+
+	results = []
+	for pid in range(len(game.players)):
+		if pid == game.human_player_id:
+			continue
+		calls = game.check_available_calls(pid, discarded)
+		calls['can_kan'] = CallChecker.can_kan(game.players[pid].hand.to_list(), discarded)
+		results.append({'player_id': pid, 'calls': calls})
+
+	return jsonify({'discarded': discarded, 'results': results})
+
+
+@app.route('/apply_call', methods=['POST'])
+def apply_call():
+	"""フロントから鳴き実行（pong/chow/kan/ron/pass）を受け付ける"""
+	game = get_game_from_session()
+	if game is None:
+		return jsonify({'error': 'No game in progress'}), 400
+
+	try:
+		player_id = int(request.json.get('player_id'))
+		action = request.json.get('action')
+		tiles = request.json.get('tiles', [])
+	except Exception:
+		return jsonify({'error': 'Invalid parameters'}), 400
+
+	if action == 'pong':
+		ok = game.apply_pong(player_id, tiles)
+	elif action == 'chow':
+		ok = game.apply_chow(player_id, tiles)
+	elif action == 'kan':
+		tile = tiles[0] if tiles else None
+		if tile:
+			ok = game.apply_kan(player_id, tile, is_closed=False)
+		else:
+			ok = False
+	elif action == 'ron':
+		ok = False
+	elif action == 'pass':
+		ok = True
+	else:
+		return jsonify({'error': 'Unknown action'}), 400
+
+	save_game_to_session(game)
+
+	return jsonify({'ok': ok, 'action': action, 'player_id': player_id})
 
 
 # 新しいルート: /check_agari

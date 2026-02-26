@@ -100,6 +100,36 @@ class Player:
 		self.hand.sort()
 		return True
 
+	def call_kan(self, tile: str, is_closed: bool = False) -> bool:
+		"""
+		カンを成立させる（簡易実装）
+
+		Args:
+			tile: カンに使う牌の文字列（例: '5p'）
+			is_closed: 暗槓かどうか（True=暗槓, False=明槓）
+
+		Returns:
+			成功なら True
+		"""
+		# 暗槓の場合は手牌に4枚必要、明槓（捨て牌を使う明槓）は手牌に3枚必要
+		required = 4 if is_closed else 3
+		if self.hand.to_list().count(tile) < required:
+			return False
+
+		# 手牌から必要枚数を削除（暗槓は4枚、明槓は3枚）
+		for _ in range(required):
+			# remove first occurrence
+			if tile in self.hand.tiles:
+				self.hand.remove_tile(self.hand.tiles.index(tile))
+			else:
+				# もし足りなければ失敗
+				return False
+
+		# メルドとして4枚のリストを追加（カンは4枚）
+		self.melds.append([tile, tile, tile, tile])
+		self.hand.sort()
+		return True
+
 	def to_dict(self) -> dict:
 		"""プレイヤー情報を辞書化"""
 		return {
