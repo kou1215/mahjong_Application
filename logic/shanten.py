@@ -113,7 +113,8 @@ def shanten_standard(counts: List[int]) -> int:
 	sh = 8 - m * 2 - t
 	if sh < min_shanten:
 		min_shanten = sh
-	return min_shanten
+	# シャンテン数は 0 未満にはしない
+	return max(min_shanten, 0)
 
 
 def shanten_chiitoitsu(counts: List[int]) -> int:
@@ -142,30 +143,32 @@ def shanten_kokushi(counts: List[int]) -> int:
 def calculate_shanten(hand: List[str]) -> int:
 	"""
 	手牌のシャンテン数を計算
-	外部ライブラリが利用可能ならそれを使用、なければフォールバック
+	mahjong.agari.Agariを使用した正確な計算
 	"""
-	# If an external mahjong library is installed, try to use it.
-	if _MAHJONG_AVAILABLE:
-		try:
-			# Common API: mahjong.shanten.Shanten
-			try:
-				from mahjong.shanten import Shanten
-				sh = Shanten()
-				return sh.calculate_shanten(hand)
-			except Exception:
-				# fallback: try module-level helpers
-				try:
-					from mahjong import shanten as sh_mod
-					if hasattr(sh_mod, 'calculate_shanten'):
-						return sh_mod.calculate_shanten(hand)
-					if hasattr(sh_mod, 'shanten'):
-						return sh_mod.shanten(hand)
-				except Exception:
-					pass
-		except Exception:
-			pass
-	# Fallback to built-in implementation
+	from mahjong.agari import Agari
+	
+	agari = Agari()
 	counts = hand_to_counts(hand)
+	valid_count = sum(counts)
+	# if hand doesn't contain exactly 14 valid tiles, treat as invalid/high shanten
+	if valid_count != 14:
+		return 8
+	
+	# アガリ形なら -1
+	if agari.is_agari(counts):
+		return -1
+	
+	# シャンテン値：単体の削除でテンパイになるかをチェック
+	for i in range(34):
+		if counts[i] > 0:
+			counts[i] -= 1
+			if agari.is_agari(counts):
+				counts[i] += 1
+				return 0  # テンパイ
+			counts[i] += 1
+	
+	# それ以外は以前のフォールバック実装に委ねる
+	# counts は既に定義
 	s_std = shanten_standard(counts)
 	s_chi = shanten_chiitoitsu(counts)
 	s_kok = shanten_kokushi(counts)

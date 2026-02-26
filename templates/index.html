@@ -72,7 +72,7 @@
           {% endfor %}
         </div>
         <div style="margin-top:6px; font-size:0.9em; color:#444" id="compact-{{ hv.player }}">{{ hv.compact }}</div>        {% if hv.player == 0 %}
-          <button type="button" onclick="checkAgari()" style="margin-top:8px; padding:8px 16px; background:#4CAF50; color:white; border:none; border-radius:4px; cursor:pointer; font-weight:bold;">
+          <button type="button" id="agari-button" onclick="checkAgari()" style="margin-top:8px; padding:8px 16px; background:#4CAF50; color:white; border:none; border-radius:4px; cursor:pointer; font-weight:bold;">
             🎯 アガり判定
           </button>
         {% endif %}        <div class="discards" id="discards-{{ hv.player }}"></div>
@@ -87,9 +87,17 @@
         element.src = '/static/tiles/' + tileName + '.svg';
       }
     }
+    // 初期シャンテン値をwindowに保存
+    const handsData = {{ hands_view | tojson | safe | replace("'", '"') }};
+    window.shantenValues = handsData.map(hv => {
+      // テンプレートから取得したシャンテン値を抽出
+      return hv.shanten;
+    });
+    console.log('Initial hands data:', handsData);
+    console.log('Initial shanten values:', window.shantenValues);
+
     // 捨て牌履歴
     const discards = [[], [], [], []];
-    
     // 最後に引いた牌を記録
     let lastDrawnTile = null;
     window.player0_draw = null;
@@ -112,62 +120,105 @@
       });
     }
 
-    async function discardTile(idx) {
-      const formData = new FormData();
-      formData.append('discard_index', idx);
-      const res = await fetch('/discard', { method: 'POST', body: formData });
-      if (!res.ok) {
-        alert('エラー: ' + (await res.text()));
-        return;
+    // アガり形判定でボタン色を更新
+    function updateAgariButton() {
+      const button = document.getElementById('agari-button');
+      if (!button) return;
+      
+      // Player 0 のシャンテン数を取得
+      const shanten = window.shantenValues ? window.shantenValues[0] : null;
+      
+      if (shanten === -1) {
+        // アガり形：ボタンを目立つ色（オレンジ系）に変更
+        button.style.background = '#FF6B35';
+        button.title = 'アガり形です！';
+      } else if (shanten === 0) {
+        // テンパイ：ボタンを注意色に
+        button.style.background = '#FFB703';
+        button.title = 'テンパイしています';
+      } else {
+        // 通常状態：緑
+        button.style.background = '#4CAF50';
+        button.title = '';
       }
-      const data = await res.json();
-      window.player0_draw = data.player0_draw;
-      // 最新のシャンテン数リストをwindowに保存
-      window.shantenValues = data.shanten_list;
-      lastDrawnTile = data.player0_draw; // 最後に引いた牌を記録
-      updateHands(data.hands, data.shanten_list);
-      updateDiscards(data, data.auto_log);
+    }
 
-      // ドラ表示牌の更新
-      const doraImgArea = document.getElementById('dora-indicator-area');
-      if (doraImgArea) {
-        let doraImg = document.getElementById('dora-indicator-img');
-        if (doraImg) {
-          if (data.dora_indicator) {
+    async function discardTile(idx) {
+      try {
+        const formData = new FormData();
+        formData.append('discard_index', idx);
+        console.log('Sending discard request for index:', idx);
+        
+        const res = await fetch('/discard', { method: 'POST', body: formData });
+        if (!res.ok) {
+          const error = await res.text();
+          console.error('Server error:', error);
+          alert('エラー: ' + error);
+          return;
+        }
+        const data = await res.json();
+        console.log('Server response:', data);
+        
+        window.player0_draw = data.player0_draw;
+        console.log('Updated player0_draw:', window.player0_draw);
+        
+        // 最新のシャンテン数リストをwindowに保存
+        window.shantenValues = data.shanten_list;
+        lastDrawnTile = data.player0_draw;
+        
+        console.log('Calling updateHands...');
+        updateHands(data.hands, data.shanten_list);
+        console.log('updateHands completed');
+        
+        updateDiscards(data, data.auto_log);
+        
+        // アガリボタンの色を更新
+        updateAgariButton();
+
+        // ドラ表示牌の更新
+        const doraImgArea = document.getElementById('dora-indicator-area');
+        if (doraImgArea) {
+          let doraImg = document.getElementById('dora-indicator-img');
+          if (doraImg) {
+            if (data.dora_indicator) {
+              doraImg.src = '/static/tiles/' + data.dora_indicator + '.png';
+              doraImg.alt = data.dora_indicator;
+              doraImg.onerror = function() { handleImageError(this, data.dora_indicator); };
+            } else {
+              doraImg.src = '';
+              doraImg.alt = '';
+            }
+          } else if (data.dora_indicator) {
+            doraImg = document.createElement('img');
+            doraImg.id = 'dora-indicator-img';
+            doraImg.className = 'tile dora-tile';
             doraImg.src = '/static/tiles/' + data.dora_indicator + '.png';
             doraImg.alt = data.dora_indicator;
             doraImg.onerror = function() { handleImageError(this, data.dora_indicator); };
-          } else {
-            doraImg.src = '';
-            doraImg.alt = '';
+            doraImgArea.appendChild(doraImg);
           }
-        } else if (data.dora_indicator) {
-          // 画像がなければ新規作成
-          doraImg = document.createElement('img');
-          doraImg.id = 'dora-indicator-img';
-          doraImg.className = 'tile dora-tile';
-          doraImg.src = '/static/tiles/' + data.dora_indicator + '.png';
-          doraImg.alt = data.dora_indicator;
-          doraImg.onerror = function() { handleImageError(this, data.dora_indicator); };
-          doraImgArea.appendChild(doraImg);
         }
-      }
 
-      // 残りツモ回数の更新
-      if (typeof data.remaining_draws !== 'undefined') {
-        const drawsElem = document.getElementById('remaining-draws-count');
-        if (drawsElem) {
-          drawsElem.textContent = data.remaining_draws;
+        // 残りツモ回数の更新
+        if (typeof data.remaining_draws !== 'undefined') {
+          const drawsElem = document.getElementById('remaining-draws-count');
+          if (drawsElem) {
+            drawsElem.textContent = data.remaining_draws;
+          }
         }
-      }
 
-      if (data.is_game_over) {
-        // メッセージ表示
-        document.getElementById('gameover-message').style.display = '';
-        // 牌クリック無効化
-        disableTileClickHandlers();
-      } else {
-        setTileClickHandlers();
+        if (data.is_game_over) {
+          console.log('Game over');
+          document.getElementById('gameover-message').style.display = '';
+          disableTileClickHandlers();
+        } else {
+          console.log('Setting tile click handlers');
+          setTileClickHandlers();
+          console.log('Tile click handlers set');
+        }
+      } catch (error) {
+        console.error('Exception in discardTile:', error);
+        alert('エラーが発生しました: ' + error.message);
       }
     }
 
@@ -222,41 +273,60 @@
     }
 
     function updateHands(hands, shantenList) {
+      console.log('updateHands called with:', hands.length, 'players');
       for (let p = 0; p < hands.length; ++p) {
         const row = document.getElementById('tiles-row-' + p);
-        if (!row) continue;
+        if (!row) {
+          console.warn('tiles-row-' + p + ' not found');
+          continue;
+        }
         row.innerHTML = '';
+        console.log('Player', p, ': hand length =', hands[p].length);
+        
         if (p === 0) {
-          // Player 0: ツモ牌分離表示（2巡目以降のみ）
+          // Player 0: ツモ牌を視覚的に分離（2巡目以降のみ）
           const hand = hands[0];
           const drawTile = window.player0_draw;
+          console.log('Player 0: drawTile =', drawTile, ', hand =', hand);
+          
           if (hand.length === 14 && drawTile) {
-            // handのコピーを作成し、drawTileを1つだけ除去
-            const handCopy = hand.slice();
-            const drawIdx = handCopy.indexOf(drawTile);
-            if (drawIdx !== -1) handCopy.splice(drawIdx, 1);
-            // 13枚を描画
-            handCopy.forEach((t, i) => {
+            console.log('Display mode: 13+1 (separated tsumo)');
+            // ツモ牌以外の13枚を探す
+            let drawIdx = hand.lastIndexOf(drawTile);
+            if (drawIdx === -1) {
+              // 見つからない場合は最後の牌と仮定
+              drawIdx = 13;
+              console.warn('drawTile not found in hand, using index 13');
+            }
+            console.log('drawIdx =', drawIdx);
+            
+            // 13枚を描画（ツモ牌以外）
+            for (let i = 0; i < hand.length; i++) {
+              if (i === drawIdx) continue; // ツモ牌は後で
+              
               const img = document.createElement('img');
               img.className = 'tile clickable';
               img.setAttribute('data-player', 0);
               img.setAttribute('data-index', i);
-              img.src = '/static/tiles/' + t + '.png';
-              img.alt = t;
-              img.onerror = function() { handleImageError(this, t); };
+              img.src = '/static/tiles/' + hand[i] + '.png';
+              img.alt = hand[i];
+              img.onerror = function() { handleImageError(this, hand[i]); };
               row.appendChild(img);
-            });
-            // drawTileを右端に描画
-            const img = document.createElement('img');
-            img.className = 'tile clickable tsumo-tile';
-            img.setAttribute('data-player', 0);
-            img.setAttribute('data-index', drawIdx); // 元のインデックス
-            img.src = '/static/tiles/' + drawTile + '.png';
-            img.alt = drawTile;
-            img.onerror = function() { handleImageError(this, drawTile); };
-            row.appendChild(img);
+            }
+            
+            // ツモ牌を右端に描画
+            const tsumoImg = document.createElement('img');
+            tsumoImg.className = 'tile clickable tsumo-tile';
+            tsumoImg.setAttribute('data-player', 0);
+            tsumoImg.setAttribute('data-index', drawIdx);
+            tsumoImg.src = '/static/tiles/' + drawTile + '.png';
+            tsumoImg.alt = drawTile;
+            tsumoImg.onerror = function() { handleImageError(this, drawTile); };
+            row.appendChild(tsumoImg);
+            console.log('Player 0: rendered 13+1 layout');
           } else {
-            // 1巡目や13枚時は通常通り
+            console.log('Display mode: 14 (normal)');
+            // 初手または無効な状態：通常表示
             hand.forEach((t, i) => {
               const img = document.createElement('img');
               img.className = 'tile clickable';
@@ -267,6 +337,7 @@
               img.onerror = function() { handleImageError(this, t); };
               row.appendChild(img);
             });
+            console.log('Player 0: rendered 14-tile layout');
           }
         } else {
           // 他プレイヤーは従来通り
@@ -283,11 +354,27 @@
         }
         // シャンテン数も更新
         const shantenSpan = document.getElementById('shanten-' + p);
-        if (shantenSpan) {
-          if (shantenList && shantenList[p] !== undefined) {
-            shantenSpan.innerText = shantenList[p];
+        if (shantenSpan && shantenList && shantenList[p] !== undefined) {
+          const shantenVal = shantenList[p];
+          // シャンテン数が-1の場合は「アガり」と表示
+          if (shantenVal === -1) {
+            shantenSpan.innerText = 'アガり形';
+            shantenSpan.style.color = '#FF6B35';
+            shantenSpan.style.fontWeight = 'bold';
+          } else if (shantenVal === 0) {
+            shantenSpan.innerText = 'テンパイ';
+            shantenSpan.style.color = '#FFB703';
+            shantenSpan.style.fontWeight = 'bold';
+          } else if (shantenVal >= 8) {
+            // 不正な手牌など
+            shantenSpan.innerText = shantenVal;
+            shantenSpan.style.color = '#999'; // グレー表示
+            shantenSpan.title = '無効な手牌';
+            shantenSpan.style.fontWeight = '';
           } else {
-            shantenSpan.innerText = '?';
+            shantenSpan.innerText = shantenVal;
+            shantenSpan.style.color = '';
+            shantenSpan.style.fontWeight = '';
           }
         }
       }
@@ -324,6 +411,7 @@
 
     // 初期化
     setTileClickHandlers();
+    updateAgariButton();
     </script>
   {% endif %}
 </body>
