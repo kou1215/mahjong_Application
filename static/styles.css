@@ -1,9 +1,261 @@
 /* ツモ牌の右側分離表示用 */
 .tsumo-tile {
-	margin-left: 20px;
+    margin-left: 20px;
 }
-body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Hiragino Kaku Gothic ProN', Meiryo, sans-serif; padding: 18px; }
-.hands-grid { display:flex; gap:20px; flex-wrap:wrap; margin-top:12px; }
-.tiles-row { display:flex; gap:6px; align-items:flex-end; margin-top:6px; }
-.tile { width:48px; height:70px; border-radius:6px; border:1px solid #bbb; box-shadow:0 2px 4px rgba(0,0,0,0.12); background:#fff; object-fit:contain; }
-@media (max-width:600px){ .tile{ width:36px; height:52px; } .hands-grid{ gap:10px; } }
+body {
+    margin: 0;
+    padding: 0;
+    height: 100vh;
+    overflow: hidden; /* スクロール禁止 */
+    background: #2c5d3f;
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Hiragino Kaku Gothic ProN', Meiryo, sans-serif;
+}
+
+#mahjong-stadium {
+    display: flex;
+    flex-direction: column;
+    height: 100vh;
+    overflow: hidden;
+    padding: 10px;
+    box-sizing: border-box;
+}
+
+#game-info {
+    background: #2c5d3f;
+    color: #fff;
+    border-radius: 8px;
+    padding: 5px 10px;
+    margin: 0 0 5px 0;
+    display: flex;
+    align-items: center;
+    font-size: 0.98em;
+    gap: 16px;
+}
+
+#opponents-row {
+    display: flex;
+    justify-content: space-around;
+    align-items: flex-end;
+    margin-bottom: 5px;
+    margin-top: 5px;
+    min-height: 80px;
+    gap: 16px;
+}
+.opponent-area {
+    flex: 1 1 0;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    background: rgba(0,0,0,0.18);
+    padding: 5px;
+    border-radius: 6px;
+}
+.opponent-label {
+    font-size: 0.92em;
+    color: #2c5d3f;
+    margin-bottom: 2px;
+}
+.opponent-tiles {
+    display: flex;
+    width: 100%;
+    justify-content: center;
+    gap: 1px;
+    margin-bottom: 6px;
+    flex-wrap: nowrap;
+}
+.opponent-tile {
+    width: 100% !important;
+    max-width: 22px !important;
+    height: auto !important;
+    border-radius: 3px;
+    box-shadow: 0 1px 2px rgba(0,0,0,0.2);
+    object-fit: contain;
+    margin-right: 2px;
+}
+.opponent-discards {
+    display: flex;
+    gap: 2px;
+    margin-top: 2px;
+    min-height: 28px;
+}
+
+#center-table {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    margin-bottom: 18px;
+    min-height: 0;
+    width: 100%;
+    justify-content: center;
+    flex-grow: 1;
+}
+#center-discards {
+    width: 100%;
+    margin-top: 8px;
+}
+.center-discard-row {
+    display: flex;
+    align-items: center;
+    margin-bottom: 4px;
+    gap: 8px;
+}
+.center-discard-label {
+    font-size: 0.95em;
+    color: #2c5d3f;
+    min-width: 90px;
+}
+.center-discards {
+    display: flex;
+    gap: 2px;
+    min-height: 28px;
+}
+
+#my-area {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    margin-top: auto; /* 上の空きスペースを自動で埋めて下部に固定 */
+    margin-bottom: 0;
+    padding: 15px 30px; /* 上下15px、左右30pxの心地よい余白 */
+    background: rgba(0, 0, 0, 0.2); /* 薄黒い枠 */
+    border-radius: 12px; /* 角を少し丸める */
+    
+    /* ▼ここが枠を小さくする魔法▼ */
+    align-self: center; /* 画面横幅いっぱいに広がるのを防ぎ、中央に配置 */
+    width: fit-content; /* 中身（手牌や河）の幅にぴったり合わせる */
+}
+.my-label {
+    font-size: 1em;
+    color: #1a3a2a;
+    margin-bottom: 2px;
+}
+.my-tiles {
+    display: flex;
+    gap: 8px;
+    margin-bottom: 6px;
+    flex-wrap: nowrap;
+}
+.tile {
+    width: auto;
+    height: auto;
+    max-height: 9vh;
+    max-width: 42px;
+    border-radius: 6px;
+    border: 1px solid #bbb;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.12);
+    background: #fff;
+    object-fit: contain;
+}
+.my-discards {
+    display: grid !important;
+    grid-template-columns: repeat(6, 24px) !important;
+    gap: 2px;
+    margin-bottom: 10px;
+    justify-content: center;
+}
+.discard-tile, .opponent-tile {
+    width: 24px !important;
+    height: 34px !important;
+    object-fit: contain;
+    margin: 0 !important;
+    max-height: none !important;
+    border-radius: 3px;
+}
+/* 捨て牌画像のサイズ強制固定（全員共通） */
+.discards img {
+    width: 24px !important;
+    height: 34px !important;
+    object-fit: contain;
+    margin: 0 !important;
+    max-height: none !important;
+    border-radius: 3px;
+}
+
+/* =========================================
+   捨て牌（河）の6枚切り完全固定ルール
+   ========================================= */
+.discards {
+    display: grid !important;
+    grid-template-columns: repeat(6, 24px) !important;
+    gap: 2px !important;
+    justify-content: center !important;
+    width: max-content !important;
+    margin: 5px auto 10px auto !important;
+}
+.discards img {
+    width: 24px !important;
+    height: 34px !important;
+    object-fit: contain !important;
+    display: block !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    max-height: none !important;
+    border-radius: 3px;
+    box-shadow: 0 1px 2px rgba(0,0,0,0.3);
+}
+
+/* =========================================
+   UIの固定表示（流局メッセージ・アガリボタン）
+   ========================================= */
+/* 流局メッセージ（画面上部中央に固定） */
+#gameover-message {
+    position: fixed;
+    top: 15%;
+    left: 50%;
+    transform: translateX(-50%);
+    background: rgba(0, 0, 0, 0.85);
+    color: #ff4444;
+    font-size: 2em;
+    font-weight: bold;
+    padding: 20px 40px;
+    border-radius: 10px;
+    border: 3px solid #ff4444;
+    z-index: 1000;
+    text-align: center;
+    box-shadow: 0 4px 15px rgba(0,0,0,0.5);
+}
+
+/* アガリ判定ボタン（画面右下に固定） */
+#agari-btn {
+    position: fixed;
+    bottom: 30px;
+    right: 30px;
+    padding: 15px 25px;
+    background: #4CAF50;
+    color: white;
+    font-size: 1.2em;
+    font-weight: bold;
+    border: none;
+    border-radius: 8px;
+    cursor: pointer;
+    z-index: 100;
+    box-shadow: 0 4px 8px rgba(0,0,0,0.3);
+    transition: transform 0.1s, background 0.2s;
+}
+#agari-btn:hover {
+    background: #45a049;
+    transform: scale(1.05);
+}
+
+@media (max-width: 900px) {
+    #opponents-row {
+        min-height: 80px;
+    }
+    .opponent-area {
+        min-width: 120px;
+    }
+    .opponent-tile {
+        width: 24px;
+        height: 36px;
+    }
+    .tile {
+        width: 36px;
+        height: 52px;
+    }
+}
+@media (max-width:600px){
+    #mahjong-stadium { min-height: 0; }
+    .tile{ width:28px; height:40px; }
+    .opponent-tile{ width:18px; height:28px; }
+}
