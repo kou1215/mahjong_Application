@@ -6,6 +6,7 @@ from typing import List, Optional, Dict, Any
 from models.tile_utils import build_wall
 from models.player import Player, AIPlayer
 from logic.agari import AgariChecker
+from logic.calls import CallChecker, CallAction
 from mahjong.constants import EAST, SOUTH, WEST, NORTH
 
 
@@ -29,6 +30,7 @@ class Game:
 		self.current_turn = 0
 		self.is_game_over = False
 		self._agari_checker = AgariChecker()
+		self._call_checker = CallChecker()
 		self._initialize_players()
 
 	def _initialize_players(self) -> None:
@@ -254,4 +256,147 @@ class Game:
 			'player_id': player_id,
 			'win_tile': win_tile,
 			'value': self.estimate_agari_value(player_id, win_tile, is_tsumo) if is_agari else None,
+		}
+
+	def check_available_calls(self, player_id: int, discarded_tile: str) -> Dict[str, bool]:
+		"""
+		プレイヤーが実行可能な鳴きをチェック
+		
+		Args:
+			player_id: プレイヤーID
+			discarded_tile: 捨てられた牌
+		
+		Returns:
+			{
+				'can_pong': bool,
+				'can_chow': bool,
+				'can_ron': bool,
+			}
+		"""
+		if player_id < 0 or player_id >= len(self.players):
+			return {'can_pong': False, 'can_chow': False, 'can_ron': False}
+		
+		player = self.players[player_id]
+		hand_tiles = player.hand.to_list()
+		
+		# チーが可能な場合は番のプレイヤーチェック（捨てたプレイヤーの ディーラー番の次 までが可能）
+		can_chow = False
+		
+		# ロン判定
+		can_ron = self._call_checker.can_ron(hand_tiles, discarded_tile, self._agari_checker)
+		
+		return {
+			'can_pong': self._call_checker.can_pong(hand_tiles, discarded_tile),
+			'can_chow': self._call_checker.can_chow(hand_tiles, discarded_tile),
+			'can_ron': can_ron,
+		}
+
+	def find_pong_combinations(self, player_id: int, discarded_tile: str) -> List[List[str]]:
+		"""
+		ポンの組み合わせを検出
+		
+		Args:
+			player_id: プレイヤーID
+			discarded_tile: 捨てられた牌
+		
+		Returns:
+			ポンの組み合わせリスト（通常は1つ）
+		"""
+		if player_id < 0 or player_id >= len(self.players):
+			return []
+		
+		player = self.players[player_id]
+		
+		if not self._call_checker.can_pong(player.hand.to_list(), discarded_tile):
+			return []
+		
+		# ポンは常に1つの組み合わせのみ
+		return [[discarded_tile, discarded_tile, discarded_tile]]
+
+	def find_chow_combinations(self, player_id: int, discarded_tile: str) -> List[List[str]]:
+		"""
+		チーの可能な組み合わせを検出
+		
+		Args:
+			player_id: プレイヤーID
+			discarded_tile: 捨てられた牌
+		
+		Returns:
+			チーの組み合わせリスト
+		"""
+		if player_id < 0 or player_id >= len(self.players):
+			return []
+		
+		player = self.players[player_id]
+		hand_tiles = player.hand.to_list()
+		
+		possible = CallChecker._find_possible_chows(hand_tiles, discarded_tile)
+		return [list(combo) for combo in possible]
+
+	def apply_pong(self, player_id: int, tiles: List[str]) -> bool:
+		"""
+		ポンを適用
+		
+		Args:
+			player_id: プレイヤーID
+			tiles: ポンを作る3つの牌
+		
+		Returns:
+			成功なら True
+		"""
+		if player_id < 0 or player_id >= len(self.players):
+			return False
+		
+		return self.players[player_id].call_pong(tiles)
+
+	def apply_chow(self, player_id: int, tiles: List[str]) -> bool:
+		"""
+		チーを適用
+		
+		Args:
+			player_id: プレイヤーID
+			tiles: チーを作る3つの牌
+		
+		Returns:
+			成功なら True
+		"""
+		if player_id < 0 or player_id >= len(self.players):
+			return False
+		
+		return self.players[player_id].call_chow(tiles)
+
+	def check_ron(self, player_id: int, discarded_tile: str) -> Dict[str, Any]:
+		"""
+		ロン和了をチェックして点数を計算
+		
+		Args:
+			player_id: プレイヤーID
+			discarded_tile: ロンする牌
+		
+		Returns:
+			{
+				'can_ron': bool,
+				'value': Dict（ロンが可能な場合）,
+			}
+		"""
+		if player_id < 0 or player_id >= len(self.players):
+			return {'can_ron': False, 'value': None}
+		
+		can_ron = self._call_checker.can_ron(
+			self.players[player_id].hand.to_list(),
+			discarded_tile,
+			self._agari_checker
+		)
+		
+		if not can_ron:
+			return {'can_ron': False, 'value': None}
+		
+		# ロンの場合は is_tsumo=False
+		value = self.estimate_agari_value(player_id, discarded_tile, is_tsumo=False)
+		
+		return {
+			'can_ron': True,
+			'player_id': player_id,
+			'discarded_tile': discarded_tile,
+			'value': value,
 		}

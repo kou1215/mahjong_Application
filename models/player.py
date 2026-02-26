@@ -21,6 +21,7 @@ class Player:
 		self.is_ai = is_ai
 		self.hand = Hand()
 		self.discards: List[str] = []
+		self.melds: List[List[str]] = []  # 鳴きのリスト（各鳴きは3つの牌のリスト）
 
 	def add_tile(self, tile: str) -> None:
 		"""ツモ牌を追加"""
@@ -49,6 +50,56 @@ class Player:
 		self.discards.append(tile)
 		return tile
 
+	def call_pong(self, tiles: List[str]) -> bool:
+		"""
+		ポンを成立させる
+		
+		Args:
+			tiles: ポンを作る3つの牌
+		
+		Returns:
+			成功なら True
+		"""
+		if len(tiles) != 3 or not all(t == tiles[0] for t in tiles):
+			return False
+		
+		# 手牌から牌を削除
+		for tile in tiles[:2]:  # 捨てられた牌を除く2枚を削除
+			if tile in self.hand.tiles:
+				self.hand.remove_tile(self.hand.tiles.index(tile))
+			else:
+				return False
+		
+		# メルドに追加
+		self.melds.append(tiles)
+		self.hand.sort()
+		return True
+
+	def call_chow(self, tiles: List[str]) -> bool:
+		"""
+		チーを成立させる
+		
+		Args:
+			tiles: チーを作る3つの牌（連続）
+		
+		Returns:
+			成功なら True
+		"""
+		if len(tiles) != 3:
+			return False
+		
+		# 手牌から牌を削除
+		for tile in tiles[1:]:  # 捨てられた牌を除く2枚を削除
+			if tile in self.hand.tiles:
+				self.hand.remove_tile(self.hand.tiles.index(tile))
+			else:
+				return False
+		
+		# メルドに追加
+		self.melds.append(tiles)
+		self.hand.sort()
+		return True
+
 	def to_dict(self) -> dict:
 		"""プレイヤー情報を辞書化"""
 		return {
@@ -56,6 +107,7 @@ class Player:
 			'hand': self.hand.to_list(),
 			'shanten': self.get_shanten(),
 			'discards': self.discards,
+			'melds': self.melds,
 			'is_ai': self.is_ai,
 		}
 
