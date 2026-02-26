@@ -88,7 +88,7 @@
     <div id="opponents-row">
       {% if hands_view %}
         <div class="opponent-area" id="opponent-3">
-          <div class="opponent-label">Player 3 (shanten: <span class="shanten" id="shanten-3">{{ hands_view[3].shanten if hands_view|length > 3 else '?' }}</span>)</div>
+          <div class="opponent-label">Player 3</div>
           <div class="tiles-row opponent-tiles" id="tiles-row-3">
             {% for t in hands_view[3].tiles %}
               <img class="tile opponent-tile" data-player="3" data-index="{{ loop.index0 }}" src="{{ url_for('static', filename='tiles/ura.png') }}" alt="ura">
@@ -97,7 +97,7 @@
           <div class="discards" id="discards-3"></div>
         </div>
         <div class="opponent-area" id="opponent-2">
-          <div class="opponent-label">Player 2 (shanten: <span class="shanten" id="shanten-2">{{ hands_view[2].shanten if hands_view|length > 2 else '?' }}</span>)</div>
+          <div class="opponent-label">Player 2</div>
           <div class="tiles-row opponent-tiles" id="tiles-row-2">
             {% for t in hands_view[2].tiles %}
               <img class="tile opponent-tile" data-player="2" data-index="{{ loop.index0 }}" src="{{ url_for('static', filename='tiles/ura.png') }}" alt="ura">
@@ -106,7 +106,7 @@
           <div class="discards" id="discards-2"></div>
         </div>
         <div class="opponent-area" id="opponent-1">
-          <div class="opponent-label">Player 1 (shanten: <span class="shanten" id="shanten-1">{{ hands_view[1].shanten if hands_view|length > 1 else '?' }}</span>)</div>
+          <div class="opponent-label">Player 1</div>
           <div class="tiles-row opponent-tiles" id="tiles-row-1">
             {% for t in hands_view[1].tiles %}
               <img class="tile opponent-tile" data-player="1" data-index="{{ loop.index0 }}" src="{{ url_for('static', filename='tiles/ura.png') }}" alt="ura">
@@ -124,14 +124,13 @@
     <div id="my-area">
       {% if hands_view %}
         {% if hands_view[0] %}
-          <div class="my-label">あなた (Player 0) (shanten: <span class="shanten" id="shanten-0">{{ hands_view[0].shanten }}</span>)</div>
+           <div class="my-label">あなた (Player 0)</div>
           <div class="discards" id="discards-0"></div>
           <div class="tiles-row my-tiles" id="tiles-row-0">
             {% for t in hands_view[0].tiles %}
               <img class="tile clickable" data-player="0" data-index="{{ loop.index0 }}" src="{{ url_for('static', filename='tiles/' + t + '.png') }}" alt="{{ t }}">
             {% endfor %}
           </div>
-          <div style="margin-top:6px; font-size:0.9em; color:#ddd" id="compact-0">{{ hands_view[0].compact }}</div>
           <button type="button" id="agari-btn" onclick="checkAgari()">🎯 アガり判定</button>
         {% endif %}
       {% endif %}
