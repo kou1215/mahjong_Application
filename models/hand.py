@@ -63,6 +63,7 @@ class Hand:
 		player_wind: int = EAST,
 		round_wind: int = EAST,
 		dora_indicators: list = None,
+		is_riichi: bool = False,
 	) -> Dict[str, Any]:
 		"""
 		アガった場合の手数を計算
@@ -90,7 +91,8 @@ class Hand:
 			self.tiles, win_tile, is_tsumo, is_dealer,
 			melds=melds,
 			player_wind=player_wind, round_wind=round_wind,
-			dora_indicators=dora_indicators
+			dora_indicators=dora_indicators,
+			is_riichi=is_riichi
 		)
 
 	def copy(self) -> 'Hand':

@@ -130,7 +130,11 @@
       {# Template block #}
       {% if hands_view %}
           {% if hands_view[0] %}
-             <div class="my-label">あなた (Player 0)</div>
+             <div class="my-label">あなた (Player 0)
+               <span id="riichi-status-label" style="color:#ff9800;font-weight:bold;margin-left:8px;">
+                 {% if is_riichi and is_riichi[0] %}【リーチ】{% endif %}
+               </span>
+             </div>
           <div class="discards" id="discards-0"></div>
           <div id="melds-display-area" style="margin-bottom:12px;"></div>
           <div id="agari-tiles-area" style="margin-bottom:10px;"></div>
@@ -139,6 +143,7 @@
               <img class="tile clickable" data-player="0" data-index="{{ loop.index0 }}" src="{{ url_for('static', filename='tiles/' + t + '.png') }}" alt="{{ t }}">
             {% endfor %}
           </div>
+          <button type="button" id="riichi-btn" style="display: {% if can_riichi %}inline-block{% else %}none{% endif %}; background-color: #9c27b0; color: white; margin-right: 10px; margin-top: 8px; margin-bottom: 8px;" onclick="toggleRiichi()">🔥 リーチ</button>
           <button type="button" id="agari-btn" onclick="checkAgari()">🎯 アガり判定</button>
           <div id="available-calls-area" style="margin-top:12px;"></div>
         {% endif %}
@@ -147,6 +152,21 @@
   </div>
 
  <script>
+      // リーチボタンの状態管理
+      let riichiMode = false;
+
+      // リーチボタン押下時の挙動
+      function toggleRiichi() {
+        const riichiBtn = document.getElementById('riichi-btn');
+        riichiMode = !riichiMode;
+        if (riichiMode) {
+          riichiBtn.style.backgroundColor = '#ff9800';
+          riichiBtn.innerText = 'リーチ宣言中！';
+        } else {
+          riichiBtn.style.backgroundColor = '#9c27b0';
+          riichiBtn.innerText = '🔥 リーチ';
+        }
+      }
     function handleImageError(element, tileName) {
       if (element.src.endsWith('.png')) {
         element.onerror = null;
@@ -154,35 +174,59 @@
       }
     }
 
-    {% if hands_view %}
-    const discards = {{ hands_view | map(attribute='discards') | list | tojson }};
-    const initialMelds = {{ hands_view | map(attribute='melds') | list | tojson }};
-    const initialAgariTiles = {{ agari_tiles_view | tojson }};
-    const initialPendingCalls = {{ pending_calls | tojson }};
-    const initialLastDiscarded = {{ last_discarded | tojson }};
-    let currentTurn = {{ current_turn | default(0) }};
-    let gamePhase = {{ phase | tojson }};
-    {% else %}
-    const discards = [[], [], [], []];
-    const initialMelds = [[], [], [], []];
-    const initialAgariTiles = [[], [], [], []];
-    const initialPendingCalls = [];
-    const initialLastDiscarded = null;
-    let currentTurn = 0;
-    let gamePhase = 'discard';
-    {% endif %}
+    // Jinja2の出力を一度文字列として受け取り、JSオブジェクトとしてパース（波線対策）
+    const handsView = JSON.parse('{{ hands_view | tojson | safe if hands_view else "null" }}');
+    const agariTilesView = JSON.parse('{{ agari_tiles_view | tojson | safe if agari_tiles_view else "null" }}');
+    const pendingCalls = JSON.parse('{{ pending_calls | tojson | safe if pending_calls else "[]" }}');
+    const lastDiscarded = JSON.parse('{{ last_discarded | tojson | safe if last_discarded else "null" }}');
+  
+  // 数値と文字列も引用符で囲むことでJSの文法エラーを防ぐ
+    let currentTurn = parseInt('{{ current_turn if current_turn is defined else 0 }}');
+    let gamePhase = '{{ phase if phase is defined else "discard" }}';
+
+    const discards = handsView ? handsView.map(h => h.discards) : [[], [], [], []];
+    const initialMelds = handsView ? handsView.map(h => h.melds) : [[], [], [], []];
+    const initialAgariTiles = agariTilesView || [[], [], [], []];
+    const initialPendingCalls = pendingCalls || [];
+    const initialLastDiscarded = lastDiscarded || null;
     let lastDrawnTile = null;
     window.player0_draw = null;
 
     function setTileClickHandlers() {
+            // リーチボタンの表示・状態
+            const riichiBtn = document.getElementById('riichi-btn');
+            if (typeof can_riichi !== 'undefined' && riichiBtn) {
+              if (can_riichi) {
+                riichiBtn.style.display = '';
+              } else {
+                riichiBtn.style.display = 'none';
+                riichiMode = false;
+                riichiBtn.classList.remove('active');
+              }
+            }
+            // リーチバッジ
+            const riichiBadge = document.getElementById('riichi-badge');
+            if (typeof is_riichi !== 'undefined' && riichiBadge) {
+              if (is_riichi[0]) {
+                riichiBadge.style.display = '';
+              } else {
+                riichiBadge.style.display = 'none';
+              }
+            }
+      // リーチ状態かつ自分のターンならクリック不可
+      const isPlayer0Riichi = (typeof is_riichi !== 'undefined') ? is_riichi[0] : false;
+      const isPlayer0Turn = (currentTurn === 0);
+
       document.querySelectorAll('img[data-player][data-index]').forEach(img => {
         const player = parseInt(img.getAttribute('data-player'));
-        const isActive = (gamePhase !== 'call_wait') && (player === currentTurn);
+        // リーチ状態かつ自分のターンならクリック不可
+        const isActive = (gamePhase !== 'call_wait') && (player === currentTurn) && !(isPlayer0Riichi && isPlayer0Turn);
         img.classList.toggle('clickable', isActive);
         img.style.opacity = isActive ? '1' : '0.72';
         img.title = isActive ? '打牌できます' : ('現在の手番は Player ' + currentTurn + ' です');
 
         img.onclick = function() {
+          if (!isActive) return;
           if (gamePhase === 'call_wait') {
             alert('鳴き判定中です。ポン/チー/スルーを選択してください。');
             return;
@@ -193,7 +237,7 @@
             alert('現在の手番は Player ' + currentTurn + ' です。');
             return;
           }
-          discardTile(player, idx);
+          discardTile(player, idx, riichiMode);
         };
       });
     }
@@ -234,13 +278,42 @@
       const formData = new FormData();
       formData.append('player_id', playerId);
       formData.append('discard_index', idx);
+      if (riichiMode) formData.append('declare_riichi', 'true');
       const res = await fetch('/discard', { method: 'POST', body: formData });
       if (!res.ok) {
         alert('エラー: ' + (await res.text()));
         return;
       }
-      
       const data = await res.json();
+      // デバッグ用: サーバーから返ってきたis_riichiリストを出力
+      console.log("--- Server Response: is_riichi List ---");
+      console.table(data.is_riichi);
+
+      // リーチ状態のラベル表示を動的に更新
+      const myLabel = document.querySelector('.my-label');
+      if (myLabel) {
+        // 既存の【リーチ】表示を一旦消す
+        myLabel.innerHTML = myLabel.innerHTML.replace('【リーチ】', '');
+        if (data.is_riichi && data.is_riichi[0]) {
+          myLabel.innerHTML += '<span style="color:#ff9800;font-weight:bold;margin-left:8px;">【リーチ】</span>';
+        }
+      }
+
+      // リーチボタンの表示制御
+      const riichiBtn = document.getElementById('riichi-btn');
+      if (riichiBtn && typeof data.can_riichi !== 'undefined') {
+        if (data.can_riichi) {
+          riichiBtn.style.display = 'inline-block';
+        } else {
+          riichiBtn.style.display = 'none';
+          if (typeof isDeclaringRiichi !== 'undefined') {
+            isDeclaringRiichi = false;
+          }
+          riichiBtn.style.backgroundColor = '#9c27b0';
+          riichiBtn.innerText = '🔥 リーチ';
+        }
+      }
+
       currentTurn = data.current_turn;
       gamePhase = data.phase;
       window.player0_draw = data.next_draw;
@@ -288,7 +361,7 @@
       }
 
       if (typeof data.remaining_draws !== 'undefined') {
-        const drawsElem = document.getElementById('remaining-draws-count');
+        const drawsElem = document.getElementById('remaining_draws-count');
         if (drawsElem) drawsElem.textContent = data.remaining_draws;
       }
 
@@ -507,10 +580,19 @@
         alert('引いた牌がありません');
         return;
       }
+      // 🔴 ここを追加：今、画面上で自分（Player 0）がリーチしているかを確認する
+      const myLabel = document.querySelector('.my-label');
+      const isActuallyRiichi = myLabel ? myLabel.innerHTML.includes('【リーチ】') : false;
+
       const res = await fetch('/check_agari', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ player_id: 0, win_tile: lastDrawnTile, is_tsumo: true })
+        body: JSON.stringify({ 
+          player_id: 0, 
+          win_tile: lastDrawnTile, 
+          is_tsumo: true,
+          is_riichi: isActuallyRiichi // 🔴 ここを追加：リーチ情報をサーバーに送る
+        })
       });
       if (!res.ok) {
         alert('エラー: ' + (await res.text()));
@@ -527,11 +609,12 @@
         alert('アガリが成立していません: ' + (value ? value.error : 'Unknown error'));
         return;
       }
-      const message = `★ アガり成功！\n\n翻数: ${value.han}翻\n符数: ${value.fu}符\n点数: ${value.cost.main}点（全員から合計 ${value.cost.total}点）\n限度: ${value.limit}\n役: ${value.yaku.join(', ')}`;
+      let message = `★ アガり成功！\n\n翻数: ${value.han}翻\n符数: ${value.fu}符\n点数: ${value.cost.main}点（全員から合計 ${value.cost.total}点）\n限度: ${value.limit}\n役: ${value.yaku.join(', ')}`;
+      message += `\n裏ドラ表示牌: ${data.ura_dora_indicator ? data.ura_dora_indicator : 'なし'}`;
       alert(message);
     }
 
-    function updateHands(hands, shantenList) {
+function updateHands(hands, shantenList, isRiichiList) {
       console.log('updateHands called with:', hands.length, 'players');
       for (let p = 0; p < hands.length; ++p) {
         const row = document.getElementById('tiles-row-' + p);
@@ -544,17 +627,16 @@
         if (p === 0) {
           const hand = hands[0];
           const drawTile = window.player0_draw;
-          console.log('Player 0: drawTile =', drawTile, ', hand =', hand);
           
           if (hand.length === 14 && drawTile) {
-            const drawIdx = hand.lastIndexOf(drawTile); // 重複牌がある場合を考慮し最後をツモ牌とする
+            const drawIdx = hand.lastIndexOf(drawTile); 
             let normalTiles = [];
             let tsumoTileNode = null;
             hand.forEach((t, i) => {
               const img = document.createElement('img');
               img.className = 'tile clickable';
               img.setAttribute('data-player', 0);
-              img.setAttribute('data-index', i); // 元の正確なインデックスを絶対に保持する
+              img.setAttribute('data-index', i);
               img.src = '/static/tiles/' + t + '.png';
               img.alt = t;
               img.onerror = function() { handleImageError(this, t); };
@@ -565,9 +647,7 @@
                 normalTiles.push(img);
               }
             });
-            // 13枚を先にアペンド
             normalTiles.forEach(node => row.appendChild(node));
-            // ツモ牌を最後にアペンド
             if (tsumoTileNode) row.appendChild(tsumoTileNode);
           } else {
             hand.forEach((t, i) => {
@@ -580,7 +660,6 @@
               img.onerror = function() { handleImageError(this, t); };
               row.appendChild(img);
             });
-            console.log('Player 0: rendered 14-tile layout');
           }
         } else {
           const hand = hands[p];
@@ -601,8 +680,19 @@
         if (shantenSpan) {
           shantenSpan.innerText = (shantenList && shantenList[p] !== undefined) ? shantenList[p] : '?';
         }
-      }
-    }
+
+        // 🔴 ここが重要：forループの「中」に入れる
+        let labelElem = (p === 0) ? document.querySelector('.my-label') : document.querySelector('#opponent-' + p + ' .opponent-label');
+        if (labelElem && isRiichiList && isRiichiList[p] !== undefined) {
+          let baseText = labelElem.innerText.replace(' 【リーチ】', '');
+          if (isRiichiList[p] === true) {
+            labelElem.innerHTML = baseText + ' <span style="color: #ff5252; font-weight: bold;"> 【リーチ】</span>';
+          } else {
+            labelElem.innerText = baseText;
+          }
+        }
+      } // ← forループの終わり
+    }   
 
     function updateDiscards(data, auto_log) {
       if (data.discarded_tile !== undefined && data.discarded_tile !== null) {

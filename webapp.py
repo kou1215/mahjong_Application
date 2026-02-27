@@ -1,4 +1,3 @@
-
 from flask import Flask, render_template, request, session, redirect, url_for, jsonify
 from models.game import Game
 from models.tile_utils import format_hand_compact
@@ -14,7 +13,13 @@ def get_game_from_session() -> Game:
 	"""セッションからゲーム状態を復元"""
 	game_data = session.get('game_data')
 	if game_data is None:
-		return None
+		game = Game(num_players=4, human_player_id=0)
+		game.start_game()
+		# ★新規ゲーム開始時のみテンパイ配牌
+		game.players[0].hand.tiles = ['1m','2m','3m','4m','5m','6m','7m','8m','9m','1p','1p','1p','2s','3s']
+		save_game_to_session(game)
+		return game
+		
 	
 	game = Game(num_players=4, human_player_id=0)
 	game.current_turn = game_data.get('current_turn', 0)
@@ -22,6 +27,7 @@ def get_game_from_session() -> Game:
 	game.wall = game_data.get('wall', [])
 	game.dora_indicator = game_data.get('dora_indicator')
 	game.dead_wall = game_data.get('dead_wall', [])
+	game.ura_dora_indicator = game_data.get('ura_dora_indicator')
 	game.round_wind = game_data.get('round_wind', EAST)
 	game.phase = game_data.get('phase', 'discard')
 	game.last_discarded = game_data.get('last_discarded')
@@ -35,6 +41,12 @@ def get_game_from_session() -> Game:
 		game.players[i].hand.tiles = p_data.get('hand', [])
 		game.players[i].discards = p_data.get('discards', [])
 		game.players[i].melds = p_data.get('melds', [])
+		# is_riichiフラグも復元
+		game.players[i].is_riichi = p_data.get('is_riichi', False)
+
+
+	# received_callsも復元
+	game.received_calls = game_data.get('received_calls', {})
 
 	return game
 
@@ -47,6 +59,16 @@ def save_game_to_session(game: Game) -> None:
 def build_state_response(game: Game, result: dict | None = None) -> dict:
 	"""現在のゲーム状態をフロント向けJSONに整形"""
 	result = result or {}
+	# リーチ判定（条件分解＋デバッグ出力）
+	player0 = game.players[0]
+	is_my_turn = (game.current_turn == 0)
+	is_discard_phase = (game.phase == 'discard')
+	is_not_riichi = not getattr(player0, 'is_riichi', False)
+	is_menzen = getattr(player0, 'is_menzen', len(player0.melds) == 0)
+	is_tenpai = (player0.get_shanten() <= 0)
+
+	can_riichi = is_my_turn and is_discard_phase and is_not_riichi and is_menzen and is_tenpai
+	print(f"[DEBUG Riichi] turn:{is_my_turn}, phase:{is_discard_phase}, not_riichi:{is_not_riichi}, menzen:{is_menzen}, tenpai:{is_tenpai} -> can_riichi:{can_riichi}")
 	response_data = {
 		'current_turn': game.current_turn,
 		'phase': game.phase,
@@ -65,6 +87,8 @@ def build_state_response(game: Game, result: dict | None = None) -> dict:
 		'remaining_draws': result.get('remaining_draws', max(0, len(game.wall))),
 		'melds': [p.melds for p in game.players],
 		'agari_tiles': [game.get_agari_tiles(i) for i in range(game.num_players)],
+		'can_riichi': can_riichi,
+		'is_riichi': [p.is_riichi for p in game.players],
 	}
 	if 'ok' in result:
 		response_data['ok'] = result['ok']
@@ -119,6 +143,16 @@ def index():
 
 	agari_tiles_view = [game.get_agari_tiles(i) for i in range(game.num_players)]
 
+	# can_riichi判定を追加
+	player0 = game.players[0]
+	can_riichi = (
+		game.current_turn == 0 and
+		game.phase == 'discard' and
+		not getattr(player0, 'is_riichi', False) and
+		getattr(player0, 'is_menzen', len(player0.melds) == 0) and
+		player0.get_shanten() <= 0
+	)
+
 	return render_template(
 		'index.html',
 		turns=0,
@@ -129,7 +163,8 @@ def index():
 		last_discarded=game.last_discarded,
 		agari_tiles_view=agari_tiles_view,
 		dora_indicator=game.dora_indicator,
-		remaining_draws=max(0, len(game.wall))
+		remaining_draws=max(0, len(game.wall)),
+		can_riichi=can_riichi
 	)
 
 
@@ -141,10 +176,12 @@ def discard():
 	if game is None:
 		return jsonify({'error': 'No game in progress'}), 400
 
+
 	# Player 0 の捨て牌（他プレイヤーはAI自動）
 	try:
 		player_id = int(request.form.get('player_id', game.current_turn))
 		discard_index = int(request.form.get('discard_index'))
+		declare_riichi = request.form.get('declare_riichi', 'false').lower() == 'true'
 	except (TypeError, ValueError):
 		return jsonify({'error': 'Invalid parameters'}), 400
 
@@ -152,12 +189,16 @@ def discard():
 		return jsonify({'error': f'現在の手番は Player {game.current_turn} です'}), 400
 
 	try:
-		result = game.process_discard(discard_index)
+		result = game.process_discard(discard_index, declare_riichi=declare_riichi)
 	except ValueError as e:
 		return jsonify({'error': str(e)}), 400
 	if result.get('error'):
 		return jsonify({'error': result.get('error')}), 400
 
+	# デバッグ用: Player 0のリーチフラグ状態を出力
+	print(f"--- DEBUG: Player 0 Riichi Status After Discard ---")
+	print(f"Flag in Object: {game.players[0].is_riichi}")
+	print(f"--------------------------------------------------")
 	# ゲーム状態をセッションに保存
 	save_game_to_session(game)
 	return jsonify(build_state_response(game, result))
@@ -219,29 +260,17 @@ def check_agari():
 		player_id = int(request.json.get('player_id', 0))
 		win_tile = request.json.get('win_tile')
 		is_tsumo = request.json.get('is_tsumo', True)
+		is_riichi = request.json.get('is_riichi', False)
 	except (TypeError, ValueError):
 		return jsonify({'error': 'Invalid parameters'}), 400
 
 	if not win_tile:
 		return jsonify({'error': 'win_tile is required'}), 400
 
-	# アガり判定
-	is_agari = game.check_agari(player_id)
-	
-	# 点数計算
-	value_result = None
-	if is_agari:
-		value_result = game.estimate_agari_value(player_id, win_tile, is_tsumo)
-
-	response_data = {
-		'agari': is_agari,
-		'player_id': player_id,
-		'win_tile': win_tile,
-		'is_tsumo': is_tsumo,
-		'value': value_result if is_agari else None,
-	}
-
-	return jsonify(response_data)
+	# アガり判定＋点数計算＋裏ドラ
+	win_result = game.check_and_calculate_win(player_id, win_tile, is_tsumo, is_riichi=is_riichi)
+	win_result['is_tsumo'] = is_tsumo
+	return jsonify(win_result)
 
 
 if __name__ == '__main__':

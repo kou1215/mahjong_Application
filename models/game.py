@@ -40,6 +40,7 @@ class Game:
 		self.current_discarder_id: Optional[int] = None
 		self.current_candidates: List[int] = []
 		self.current_candidate_idx: int = 0
+		self.received_calls: Dict[str, Dict[str, Any]] = {}
 
 	def _initialize_players(self) -> None:
 		"""プレイヤーを初期化"""
@@ -59,6 +60,7 @@ class Game:
 		self.pending_calls = []
 		self.passed_callers = []
 		self.current_discarder_id = None
+		self.received_calls = {}
 
 		# 王牌（dead_wall）を山札の最後14枚から切り出す
 		self.dead_wall = full_wall[-14:]
@@ -66,6 +68,9 @@ class Game:
 
 		# ドラ表示牌（王牌の5枚目、インデックス4）
 		self.dora_indicator = self.dead_wall[4] if len(self.dead_wall) >= 5 else None
+
+		# 裏ドラ表示牌（通常はドラ表示牌の隣、インデックス5）
+		self.ura_dora_indicator = self.dead_wall[5] if len(self.dead_wall) >= 6 else None
 
 		# 各プレイヤーに13枚配牌
 		for _ in range(13):
@@ -112,57 +117,7 @@ class Game:
 
 		if not raw_options:
 			return []
-
-		# 優先順位: ロン > カン/ポン > チー
-		has_ron = any(opt['calls'].get('can_ron') for opt in raw_options)
-		if has_ron:
-			options: List[Dict[str, Any]] = []
-			for opt in raw_options:
-				if opt['calls'].get('can_ron'):
-					options.append({
-						'player_id': opt['player_id'],
-						'calls': {
-							'can_pong': False,
-							'can_kan': False,
-							'can_ron': True,
-							'can_chow': False,
-						},
-						'chow_combos': [],
-					})
-			return options
-
-		has_pon_or_kan = any(opt['calls'].get('can_pong') or opt['calls'].get('can_kan') for opt in raw_options)
-		if has_pon_or_kan:
-			options = []
-			for opt in raw_options:
-				if opt['calls'].get('can_pong') or opt['calls'].get('can_kan'):
-					options.append({
-						'player_id': opt['player_id'],
-						'calls': {
-							'can_pong': bool(opt['calls'].get('can_pong')),
-							'can_kan': bool(opt['calls'].get('can_kan')),
-							'can_ron': False,
-							'can_chow': False,
-						},
-						'chow_combos': [],
-					})
-			return options
-
-		# 上位がなければチーのみ（次家のみ）
-		options = []
-		for opt in raw_options:
-			if opt['calls'].get('can_chow'):
-				options.append({
-					'player_id': opt['player_id'],
-					'calls': {
-						'can_pong': False,
-						'can_kan': False,
-						'can_ron': False,
-						'can_chow': True,
-					},
-					'chow_combos': opt.get('chow_combos', []),
-				})
-		return options
+		return raw_options
 
 	def _advance_turn_after_no_call(self) -> Optional[str]:
 		"""鳴きなし確定後に次プレイヤーへ進めてツモ。引いた牌を返す。"""
@@ -179,13 +134,14 @@ class Game:
 		"""現在のターンのプレイヤーを取得"""
 		return self.players[self.current_turn % self.num_players]
 
-	def process_discard(self, discard_index: int, drew_tile: Optional[str] = None) -> Dict[str, Any]:
+	def process_discard(self, discard_index: int, drew_tile: Optional[str] = None, declare_riichi: bool = False) -> Dict[str, Any]:
 		"""
 		現在ターンのプレイヤーの打牌を処理し、鳴き割り込みを判定する。
 		
 		Args:
 			discard_index: 捨てる牌のインデックス
 			drew_tile: プレイヤーが引いた牌（Webから提供）
+			declare_riichi: リーチ宣言かどうか
 		
 		Returns:
 			ターン処理結果の辞書
@@ -203,13 +159,23 @@ class Game:
 
 		current_player = self.get_current_player()
 		discarder_id = self.current_turn
+
+		# リーチ後は自動ツモ切り（ツモ牌を自動で捨てる）
+		if current_player.is_riichi and drew_tile is not None:
+			discard_index = len(current_player.hand) - 1
+
 		if discard_index < 0 or discard_index >= len(current_player.hand):
 			raise ValueError(f"Invalid discard index: {discard_index}")
+
+		# リーチ宣言があれば状態を更新
+		if declare_riichi:
+			current_player.is_riichi = True
 
 		discarded_tile = current_player.discard_tile(discard_index)
 		self.last_discarded = discarded_tile
 		self.current_discarder_id = discarder_id
 		self.passed_callers = []
+		self.received_calls = {}
 
 		available_calls = self._build_call_options(discarder_id, discarded_tile)
 		if available_calls:
@@ -225,6 +191,7 @@ class Game:
 				'is_game_over': self.is_game_over,
 				'remaining_draws': max(len(self.wall), 0),
 			}
+		# available_callsがなければ次のプレイヤーがツモる
 
 		drawn = self._advance_turn_after_no_call()
 		self.phase = 'discard'
@@ -245,11 +212,10 @@ class Game:
 		}
 
 	def resolve_pending_call(self, player_id: int, action: str, tiles: Optional[List[str]] = None) -> Dict[str, Any]:
-		"""待機中の鳴き割り込みに対する入力を処理する。"""
+		"""待機中の鳴き割り込みに対する入力を蓄積し、全員分揃ったら解決する"""
 		tiles = tiles or []
 		if self.is_game_over:
 			return {'ok': False, 'error': 'Game is already over'}
-
 		if self.phase != 'call_wait' or not self.pending_calls:
 			return {'ok': False, 'error': 'No pending call'}
 
@@ -257,96 +223,81 @@ class Game:
 		if entry is None:
 			return {'ok': False, 'error': 'Player is not eligible for current call'}
 
-		calls = entry.get('calls', {})
-		if action == 'pass':
-			self.pending_calls = [item for item in self.pending_calls if item['player_id'] != player_id]
-			self.passed_callers.append(player_id)
-			if self.pending_calls:
-				return {
-					'ok': True,
-					'action': 'pass',
-					'awaiting_call': True,
-					'available_calls': self.pending_calls,
-					'discarded_tile': self.last_discarded,
-					'current_turn': self.current_turn,
-				}
+		# 返答を記録 (JSON互換のためplayer_idは文字列キーにする)
+		self.received_calls[str(player_id)] = {'action': action, 'tiles': tiles}
 
-			drawn = self._advance_turn_after_no_call()
-			self.phase = 'discard'
-			self.last_discarded = None
-			self.current_discarder_id = None
+		# 鳴きの権利を持つ全員から返答が来たかチェック
+		pending_player_ids = {str(item['player_id']) for item in self.pending_calls}
+		if set(self.received_calls.keys()) != pending_player_ids:
+			# まだ返答していないプレイヤーのUIだけを残すためのリスト作成
+			remaining_calls = [c for c in self.pending_calls if str(c['player_id']) not in self.received_calls]
 			return {
 				'ok': True,
-				'action': 'pass',
-				'awaiting_call': False,
-				'available_calls': [],
-				'next_draw': drawn,
+				'action': 'waiting',
+				'awaiting_call': True,
+				'available_calls': remaining_calls,
+				'discarded_tile': self.last_discarded,
 				'current_turn': self.current_turn,
-				'is_game_over': self.is_game_over,
 			}
 
-		if action == 'ron':
-			if not calls.get('can_ron'):
-				return {'ok': False, 'error': 'Ron is not available'}
-			ron_result = self.check_ron(player_id, self.last_discarded)
-			if not ron_result.get('can_ron'):
-				return {'ok': False, 'error': 'Ron check failed'}
-			value = ron_result.get('value')
+		# 全員の返答が揃ったため優先順位に従って実行
+		return self._execute_highest_priority_call()
+
+	def _execute_highest_priority_call(self) -> Dict[str, Any]:
+		"""蓄積された返答から優先順位（ロン > ポン/カン > チー）を判定して実行する"""
+		ron_calls = {pid: data for pid, data in self.received_calls.items() if data['action'] == 'ron'}
+		pon_kan_calls = {pid: data for pid, data in self.received_calls.items() if data['action'] in ['pong', 'kan']}
+		chow_calls = {pid: data for pid, data in self.received_calls.items() if data['action'] == 'chow'}
+
+		action_taken = 'pass'
+		response_data = {}
+
+		if ron_calls:
+			print("[DEBUG] _execute_highest_priority_call: RON called")
+			winner_id = int(list(ron_calls.keys())[0])
+			value = self.estimate_agari_value(winner_id, self.last_discarded, is_tsumo=False)
 			self.is_game_over = True
-			self.phase = 'discard'
-			self.pending_calls = []
-			return {
-				'ok': True,
-				'action': 'ron',
-				'is_game_over': True,
-				'agari': True,
-				'type': 'ron',
-				'player_id': player_id,
-				'win_tile': self.last_discarded,
-				'value': value,
+			response_data = {
+				'ok': True, 'action': 'ron', 'is_game_over': True, 'agari': True,
+				'type': 'ron', 'player_id': winner_id, 'win_tile': self.last_discarded, 'value': value,
 			}
-
-		if action == 'kan':
-			if not calls.get('can_kan'):
-				return {'ok': False, 'error': 'Kan is not available'}
-			ok = self.apply_kan(player_id, self.last_discarded, is_closed=False)
-			if not ok:
-				return {'ok': False, 'error': 'Failed to apply kan'}
-		elif action == 'pong':
-			if not calls.get('can_pong'):
-				return {'ok': False, 'error': 'Pong is not available'}
-			ok = self.apply_pong(player_id, [self.last_discarded, self.last_discarded, self.last_discarded])
-			if not ok:
-				return {'ok': False, 'error': 'Failed to apply pong'}
-		elif action == 'chow':
-			if not calls.get('can_chow'):
-				return {'ok': False, 'error': 'Chow is not available'}
-			if tiles and sorted(tiles) not in [sorted(c) for c in entry.get('chow_combos', [])]:
-				return {'ok': False, 'error': 'Invalid chow tiles'}
-			use_tiles = tiles if tiles else (entry.get('chow_combos', [])[0] if entry.get('chow_combos') else [])
-			if not use_tiles:
-				return {'ok': False, 'error': 'No chow combination available'}
-			ok = self.apply_chow(player_id, use_tiles)
-			if not ok:
-				return {'ok': False, 'error': 'Failed to apply chow'}
+		elif pon_kan_calls:
+			pid = int(list(pon_kan_calls.keys())[0])
+			data = pon_kan_calls[str(pid)]
+			if data['action'] == 'pong':
+				self.apply_pong(pid, [self.last_discarded, self.last_discarded, self.last_discarded])
+			else:
+				self.apply_kan(pid, self.last_discarded, is_closed=False)
+			action_taken = data['action']
+		elif chow_calls:
+			pid = int(list(chow_calls.keys())[0])
+			data = chow_calls[str(pid)]
+			tiles = data['tiles'] if data['tiles'] else self.find_chow_combinations(pid, self.last_discarded)[0]
+			self.apply_chow(pid, tiles)
+			action_taken = 'chow'
 		else:
-			return {'ok': False, 'error': 'Unknown action'}
+			drawn = self._advance_turn_after_no_call()
+			action_taken = 'pass'
+			response_data = {
+				'ok': True, 'action': 'pass', 'awaiting_call': False, 'available_calls': [],
+				'next_draw': drawn, 'current_turn': self.current_turn, 'is_game_over': self.is_game_over,
+				'wall_count': len(self.wall), 'remaining_draws': max(len(self.wall), 0),
+			}
 
 		self.phase = 'discard'
 		self.pending_calls = []
-		self.passed_callers = []
+		self.received_calls = {}
 		self.last_discarded = None
 		self.current_discarder_id = None
 
-		return {
-			'ok': True,
-			'action': action,
-			'awaiting_call': False,
-			'current_turn': self.current_turn,
-			'is_game_over': self.is_game_over,
-			'wall_count': len(self.wall),
-			'remaining_draws': max(len(self.wall), 0),
-		}
+		if not response_data:
+			response_data = {
+				'ok': True, 'action': action_taken, 'awaiting_call': False, 'available_calls': [],
+				'current_turn': self.current_turn, 'is_game_over': self.is_game_over,
+				'wall_count': len(self.wall), 'remaining_draws': max(len(self.wall), 0),
+			}
+
+		return response_data
 
 	def to_dict(self) -> Dict[str, Any]:
 		"""ゲーム状態を辞書化"""
@@ -358,7 +309,7 @@ class Game:
 		}
 
 	def to_json_serializable(self) -> Dict[str, Any]:
-		"""JSON化できる辞書形式で返す（Flaskで使用）"""
+		"""JSON化できる辞書形式で返す(Flaskで使用)"""
 		return {
 			'current_turn': self.current_turn,
 			'is_game_over': self.is_game_over,
@@ -370,6 +321,8 @@ class Game:
 			'wall': self.wall,
 			'wall_count': len(self.wall),
 			'dora_indicator': self.dora_indicator,
+			'ura_dora_indicator': getattr(self, 'ura_dora_indicator', None),
+			'dead_wall': self.dead_wall,
 			'round_wind': self.round_wind,
 			'players': [
 				{
@@ -379,9 +332,11 @@ class Game:
 					'discards': p.discards,
 					'melds': p.melds,
 					'is_ai': p.is_ai,
+					'is_riichi': getattr(p, 'is_riichi', False)
 				}
 				for p in self.players
 			],
+			'received_calls': self.received_calls,
 		}
 
 	def check_agari(self, player_id: int) -> bool:
@@ -411,6 +366,7 @@ class Game:
 		player_id: int,
 		win_tile: str,
 		is_tsumo: bool = True,
+		is_riichi: bool = False,
 	) -> Dict[str, Any]:
 		"""
 		プレイヤーのアガり成功時の手数を計算
@@ -421,7 +377,7 @@ class Game:
 			is_tsumo: ツモ和了かどうか
 		
 		Returns:
-			手数計算結果（is_winning の詳細）
+			手数計算結果(is_winning の詳細）
 		"""
 		if player_id < 0 or player_id >= len(self.players):
 			return {
@@ -442,41 +398,58 @@ class Game:
 		winds = [EAST, SOUTH, WEST, NORTH]
 		player_wind = winds[player_id % len(winds)]  # プレイヤー0→EAST, 1→SOUTH, ...
 		
-		# ドラ表示牌をリストに変換
-		dora_indicators = [self.dora_indicator] if self.dora_indicator else None
-		
+		# ドラ表示牌・裏ドラ表示牌をリストに変換
+		dora_indicators = []
+		ura_dora = None
+		if self.dead_wall and len(self.dead_wall) >= 5:
+			dora_indicators.append(self.dead_wall[4])
+		# リーチ状態でアガった場合のみ裏ドラを加算（dead_wall[5]）
+		if is_riichi and self.dead_wall and len(self.dead_wall) >= 6:
+			ura_dora = self.dead_wall[5]
+			dora_indicators.append(ura_dora)
+		print(f"[DEBUG] estimate_agari_value: ura_dora={ura_dora} (dead_wall={self.dead_wall})")
+		if not dora_indicators:
+			dora_indicators = None
 		return player.hand.estimate_win_value(
 			win_tile, is_tsumo, is_dealer,
 			melds=melds,
 			player_wind=player_wind, round_wind=self.round_wind,
-			dora_indicators=dora_indicators
+			dora_indicators=dora_indicators,
+			is_riichi=is_riichi
 		)
 
 	def check_and_calculate_win(
-		self, player_id: int, win_tile: str, is_tsumo: bool = True
+		self, player_id: int, win_tile: str, is_tsumo: bool = True, is_riichi: bool = False
 	) -> Dict[str, Any]:
 		"""
 		プレイヤーのアガりをチェックして点数を計算
-		
+        
 		Args:
 			player_id: プレイヤーID
 			win_tile: アガり牌
 			is_tsumo: ツモ和了かどうか
-		
+        
 		Returns:
 			{
 				'agari': bool,
 				'value': Dict,
+				'ura_dora_indicator': str | None
 			}
 		"""
+		print("[DEBUG] check_and_calculate_win called")
 		is_agari = self.check_agari(player_id)
-		
-		return {
+		player = self.players[player_id]
+		actual_is_riichi = getattr(player, 'is_riichi', False) or is_riichi
+		result = {
 			'agari': is_agari,
 			'player_id': player_id,
 			'win_tile': win_tile,
-			'value': self.estimate_agari_value(player_id, win_tile, is_tsumo) if is_agari else None,
+			'value': self.estimate_agari_value(player_id, win_tile, is_tsumo, actual_is_riichi) if is_agari else None,
 		}
+		# 王牌リストから直接裏ドラ表示牌（インデックス5）を取得する
+		if is_agari and actual_is_riichi:
+			result['ura_dora_indicator'] = self.dead_wall[5] if len(self.dead_wall) >= 6 else None
+		return result
 
 	def check_available_calls(self, player_id: int, discarded_tile: str) -> Dict[str, bool]:
 		"""
@@ -520,10 +493,10 @@ class Game:
 			player_id: プレイヤーID
 			tile: カンに使う牌（文字列）
 			is_closed: 暗槓か
-
-		Returns:
-			成功なら True
-		"""
+		# リーチ状態でアガった場合のみ裏ドラを加算
+		if player.is_riichi and self.dead_wall and len(self.dead_wall) >= 6:
+			ura_dora = self.dead_wall[5]
+			dora_indicators.append(ura_dora)
 		if player_id < 0 or player_id >= len(self.players):
 			return False
 
@@ -532,7 +505,8 @@ class Game:
 		# 明槓の場合は最後の捨て牌が対象であるべき
 		if not is_closed and self.last_discarded != tile:
 			return False
-
+			is_riichi=player.is_riichi,
+			is_riichi=is_riichi
 		ok = player.call_kan(tile, is_closed=is_closed)
 		if ok:
 			# 明槓なら捨て牌は場から消費済み（last_discarded をクリア）
@@ -548,7 +522,7 @@ class Game:
 		return ok
 
 	def find_pong_combinations(self, player_id: int, discarded_tile: str) -> List[List[str]]:
-		"""
+		
 		ポンの組み合わせを検出
 		
 		Args:
@@ -556,7 +530,7 @@ class Game:
 			discarded_tile: 捨てられた牌
 		
 		Returns:
-			ポンの組み合わせリスト（通常は1つ）
+			ポンの組み合わせリスト通常は1つ
 		"""
 		if player_id < 0 or player_id >= len(self.players):
 			return []
@@ -634,15 +608,15 @@ class Game:
 	def check_ron(self, player_id: int, discarded_tile: str) -> Dict[str, Any]:
 		"""
 		ロン和了をチェックして点数を計算
-		
+
 		Args:
 			player_id: プレイヤーID
 			discarded_tile: ロンする牌
-		
+
 		Returns:
 			{
 				'can_ron': bool,
-				'value': Dict（ロンが可能な場合）,
+				'value': Dict (ロンが可能な場合),
 			}
 		"""
 		if player_id < 0 or player_id >= len(self.players):
@@ -669,7 +643,7 @@ class Game:
 		}
 
 	def get_agari_tiles(self, player_id: int) -> List[str]:
-		"""指定プレイヤーの待ち牌（アガリ牌）一覧を返す。"""
+		"""指定プレイヤーの待ち牌(アガリ牌)一覧を返す。"""
 		if player_id < 0 or player_id >= len(self.players):
 			return []
 
