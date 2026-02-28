@@ -130,11 +130,7 @@
       {# Template block #}
       {% if hands_view %}
           {% if hands_view[0] %}
-             <div class="my-label">あなた (Player 0)
-               <span id="riichi-status-label" style="color:#ff9800;font-weight:bold;margin-left:8px;">
-                 {% if is_riichi and is_riichi[0] %}【リーチ】{% endif %}
-               </span>
-             </div>
+             <div class="my-label">あなた (Player 0)</div>
           <div class="discards" id="discards-0"></div>
           <div id="melds-display-area" style="margin-bottom:12px;"></div>
           <div id="agari-tiles-area" style="margin-bottom:10px;"></div>
@@ -179,6 +175,9 @@
     const agariTilesView = JSON.parse('{{ agari_tiles_view | tojson | safe if agari_tiles_view else "null" }}');
     const pendingCalls = JSON.parse('{{ pending_calls | tojson | safe if pending_calls else "[]" }}');
     const lastDiscarded = JSON.parse('{{ last_discarded | tojson | safe if last_discarded else "null" }}');
+    const initialIsRiichi = JSON.parse('{{ is_riichi | tojson | safe if is_riichi is defined else "[false, false, false, false]" }}');
+    const initialIppatsuEligible = JSON.parse('{{ ippatsu_eligible | tojson | safe if ippatsu_eligible is defined else "[false, false, false, false]" }}');
+    const initialCanRiichi = JSON.parse('{{ can_riichi | tojson | safe if can_riichi is defined else "false" }}');
   
   // 数値と文字列も引用符で囲むことでJSの文法エラーを防ぐ
     let currentTurn = parseInt('{{ current_turn if current_turn is defined else 0 }}');
@@ -191,6 +190,28 @@
     const initialLastDiscarded = lastDiscarded || null;
     let lastDrawnTile = null;
     window.player0_draw = null;
+    let is_riichi = initialIsRiichi;
+    let ippatsu_eligible = initialIppatsuEligible;
+    let can_riichi = initialCanRiichi;
+
+    function updatePlayerStatusBadges(isRiichiList, ippatsuList) {
+      for (let p = 0; p < 4; p++) {
+        const labelElem = (p === 0)
+          ? document.querySelector('.my-label')
+          : document.querySelector('#opponent-' + p + ' .opponent-label');
+        if (!labelElem) continue;
+
+        const baseText = (p === 0) ? 'あなた (Player 0)' : ('Player ' + p);
+        let html = baseText;
+        if (isRiichiList && isRiichiList[p]) {
+          html += ' <span class="status-badge riichi-badge">リーチ</span>';
+        }
+        if (ippatsuList && ippatsuList[p]) {
+          html += ' <span class="status-badge ippatsu-badge">一発有効中</span>';
+        }
+        labelElem.innerHTML = html;
+      }
+    }
 
     function setTileClickHandlers() {
             // リーチボタンの表示・状態
@@ -202,15 +223,6 @@
                 riichiBtn.style.display = 'none';
                 riichiMode = false;
                 riichiBtn.classList.remove('active');
-              }
-            }
-            // リーチバッジ
-            const riichiBadge = document.getElementById('riichi-badge');
-            if (typeof is_riichi !== 'undefined' && riichiBadge) {
-              if (is_riichi[0]) {
-                riichiBadge.style.display = '';
-              } else {
-                riichiBadge.style.display = 'none';
               }
             }
       // リーチ状態かつ自分のターンならクリック不可
@@ -289,15 +301,10 @@
       console.log("--- Server Response: is_riichi List ---");
       console.table(data.is_riichi);
 
-      // リーチ状態のラベル表示を動的に更新
-      const myLabel = document.querySelector('.my-label');
-      if (myLabel) {
-        // 既存の【リーチ】表示を一旦消す
-        myLabel.innerHTML = myLabel.innerHTML.replace('【リーチ】', '');
-        if (data.is_riichi && data.is_riichi[0]) {
-          myLabel.innerHTML += '<span style="color:#ff9800;font-weight:bold;margin-left:8px;">【リーチ】</span>';
-        }
-      }
+      is_riichi = data.is_riichi || is_riichi;
+      ippatsu_eligible = data.ippatsu_eligible || ippatsu_eligible;
+      can_riichi = (typeof data.can_riichi !== 'undefined') ? data.can_riichi : can_riichi;
+      updatePlayerStatusBadges(is_riichi, ippatsu_eligible);
 
       // リーチボタンの表示制御
       const riichiBtn = document.getElementById('riichi-btn');
@@ -455,6 +462,11 @@
       }
       const data = await res.json();
 
+      is_riichi = data.is_riichi || is_riichi;
+      ippatsu_eligible = data.ippatsu_eligible || ippatsu_eligible;
+      can_riichi = (typeof data.can_riichi !== 'undefined') ? data.can_riichi : can_riichi;
+      updatePlayerStatusBadges(is_riichi, ippatsu_eligible);
+
       if (action === 'ron' || data.agari) {
         showAgariResult({
           agari: !!data.agari,
@@ -462,6 +474,7 @@
           player_id: data.player_id,
           win_tile: data.win_tile,
           is_tsumo: false,
+          ura_dora_indicator: data.ura_dora_indicator,
         });
       }
 
@@ -581,8 +594,7 @@
         return;
       }
       // 🔴 ここを追加：今、画面上で自分（Player 0）がリーチしているかを確認する
-      const myLabel = document.querySelector('.my-label');
-      const isActuallyRiichi = myLabel ? myLabel.innerHTML.includes('【リーチ】') : false;
+      const isActuallyRiichi = (is_riichi && is_riichi[0]) ? true : false;
 
       const res = await fetch('/check_agari', {
         method: 'POST',
@@ -614,7 +626,7 @@
       alert(message);
     }
 
-function updateHands(hands, shantenList, isRiichiList) {
+function updateHands(hands, shantenList) {
       console.log('updateHands called with:', hands.length, 'players');
       for (let p = 0; p < hands.length; ++p) {
         const row = document.getElementById('tiles-row-' + p);
@@ -680,17 +692,6 @@ function updateHands(hands, shantenList, isRiichiList) {
         if (shantenSpan) {
           shantenSpan.innerText = (shantenList && shantenList[p] !== undefined) ? shantenList[p] : '?';
         }
-
-        // 🔴 ここが重要：forループの「中」に入れる
-        let labelElem = (p === 0) ? document.querySelector('.my-label') : document.querySelector('#opponent-' + p + ' .opponent-label');
-        if (labelElem && isRiichiList && isRiichiList[p] !== undefined) {
-          let baseText = labelElem.innerText.replace(' 【リーチ】', '');
-          if (isRiichiList[p] === true) {
-            labelElem.innerHTML = baseText + ' <span style="color: #ff5252; font-weight: bold;"> 【リーチ】</span>';
-          } else {
-            labelElem.innerText = baseText;
-          }
-        }
       } // ← forループの終わり
     }   
 
@@ -726,6 +727,7 @@ function updateHands(hands, shantenList, isRiichiList) {
       setTileClickHandlers();
       updateAgariButton(); // 初期化時にもボタンの色を判定させる
     }
+    updatePlayerStatusBadges(is_riichi, ippatsu_eligible);
 
     refreshTurnInfo();
     displayAllMelds(initialMelds);

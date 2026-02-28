@@ -153,6 +153,7 @@ class AgariChecker:
         round_wind: int = EAST,
         dora_indicators: Optional[List[str]] = None,
         is_riichi: bool = False,
+        is_ippatsu: bool = False,
     ) -> Optional[Dict[str, Any]]:
         """
         アガり手の点数を計算
@@ -232,6 +233,7 @@ class AgariChecker:
             config = HandConfig(is_tsumo=is_tsumo, player_wind=player_wind, round_wind=round_wind)
             config.is_dealer = is_dealer
             config.is_riichi = is_riichi
+            config.is_ippatsu = bool(is_ippatsu and is_riichi)
 
             # ドラ表示牌を136形式に変換して渡す
             # ドラ表示牌のリストを136配列に変換（複数の牌に対応）

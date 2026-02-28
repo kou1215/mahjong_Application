@@ -47,6 +47,9 @@ def get_game_from_session() -> Game:
 
 	# received_callsも復元
 	game.received_calls = game_data.get('received_calls', {})
+	game.ippatsu_eligible = game_data.get('ippatsu_eligible', [False] * game.num_players)
+	game.riichi_locked_hands = game_data.get('riichi_locked_hands', [None] * game.num_players)
+	game.riichi_wait_tiles = game_data.get('riichi_wait_tiles', [[] for _ in range(game.num_players)])
 
 	return game
 
@@ -89,6 +92,7 @@ def build_state_response(game: Game, result: dict | None = None) -> dict:
 		'agari_tiles': [game.get_agari_tiles(i) for i in range(game.num_players)],
 		'can_riichi': can_riichi,
 		'is_riichi': [p.is_riichi for p in game.players],
+		'ippatsu_eligible': game.ippatsu_eligible,
 	}
 	if 'ok' in result:
 		response_data['ok'] = result['ok']
@@ -164,7 +168,9 @@ def index():
 		agari_tiles_view=agari_tiles_view,
 		dora_indicator=game.dora_indicator,
 		remaining_draws=max(0, len(game.wall)),
-		can_riichi=can_riichi
+		can_riichi=can_riichi,
+		is_riichi=[p.is_riichi for p in game.players],
+		ippatsu_eligible=getattr(game, 'ippatsu_eligible', [False] * game.num_players),
 	)
 
 
