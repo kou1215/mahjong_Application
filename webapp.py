@@ -2,11 +2,24 @@ from flask import Flask, render_template, request, session, redirect, url_for, j
 from models.game import Game
 from models.tile_utils import format_hand_compact
 from logic.calls import CallChecker
-from mahjong.constants import EAST
+from mahjong.constants import EAST, SOUTH, WEST, NORTH
 
 app = Flask(__name__)
 # セッション用のシークレットキー（本番ではより安全な値に）
 app.secret_key = 'your_secret_key_here'
+
+
+def wind_to_label(wind: int) -> str:
+	"""場風/自風の数値定数を表示文字へ変換"""
+	if wind == EAST:
+		return '東'
+	if wind == SOUTH:
+		return '南'
+	if wind == WEST:
+		return '西'
+	if wind == NORTH:
+		return '北'
+	return str(wind)
 
 
 def get_game_from_session() -> Game:
@@ -15,8 +28,6 @@ def get_game_from_session() -> Game:
 	if game_data is None:
 		game = Game(num_players=4, human_player_id=0)
 		game.start_game()
-		# ★新規ゲーム開始時のみテンパイ配牌
-		game.players[0].hand.tiles = ['1m','2m','3m','4m','5m','6m','7m','8m','9m','1p','1p','1p','2s','3s']
 		save_game_to_session(game)
 		return game
 		
@@ -29,6 +40,9 @@ def get_game_from_session() -> Game:
 	game.dead_wall = game_data.get('dead_wall', [])
 	game.ura_dora_indicator = game_data.get('ura_dora_indicator')
 	game.round_wind = game_data.get('round_wind', EAST)
+	game.dealer_id = game_data.get('dealer_id', 0)
+	game.honba = game_data.get('honba', 0)
+	game.kan_count = game_data.get('kan_count', 0)
 	game.phase = game_data.get('phase', 'discard')
 	game.last_discarded = game_data.get('last_discarded')
 	game.pending_calls = game_data.get('pending_calls', [])
@@ -75,6 +89,12 @@ def build_state_response(game: Game, result: dict | None = None) -> dict:
 	response_data = {
 		'current_turn': game.current_turn,
 		'phase': game.phase,
+		'round_wind': game.round_wind,
+		'round_wind_label': wind_to_label(game.round_wind),
+		'dealer_id': game.dealer_id,
+		'honba': game.honba,
+		'seat_winds': game.get_seat_winds(),
+		'seat_wind_labels': [wind_to_label(w) for w in game.get_seat_winds()],
 		'awaiting_call': result.get('awaiting_call', game.phase == 'call_wait'),
 		'discarded_tile': result.get('discarded_tile', game.last_discarded),
 		'discarder_id': result.get('discarder_id', game.current_discarder_id),
@@ -85,14 +105,17 @@ def build_state_response(game: Game, result: dict | None = None) -> dict:
 		'wall_count': result.get('wall_count', len(game.wall)),
 		'is_game_over': result.get('is_game_over', game.is_game_over),
 		'hands': [p.hand.to_list() for p in game.players],
+		'discards': [p.discards for p in game.players],
 		'shanten_list': [p.get_shanten() for p in game.players],
 		'dora_indicator': game.dora_indicator,
+		'dora_indicators': game.get_revealed_dora_indicators(),
 		'remaining_draws': result.get('remaining_draws', max(0, len(game.wall))),
 		'melds': [p.melds for p in game.players],
 		'agari_tiles': [game.get_agari_tiles(i) for i in range(game.num_players)],
 		'can_riichi': can_riichi,
 		'is_riichi': [p.is_riichi for p in game.players],
 		'ippatsu_eligible': game.ippatsu_eligible,
+		'furiten_list': [game.is_furiten(i) for i in range(game.num_players)],
 	}
 	if 'ok' in result:
 		response_data['ok'] = result['ok']
@@ -110,6 +133,10 @@ def build_state_response(game: Game, result: dict | None = None) -> dict:
 		response_data['win_tile'] = result['win_tile']
 	if 'value' in result:
 		response_data['value'] = result['value']
+	if 'ura_dora_indicator' in result:
+		response_data['ura_dora_indicator'] = result['ura_dora_indicator']
+	if 'new_hand_started' in result:
+		response_data['new_hand_started'] = result['new_hand_started']
 	return response_data
 
 
@@ -117,6 +144,22 @@ def build_state_response(game: Game, result: dict | None = None) -> dict:
 def reset():
 	session.clear()
 	return redirect(url_for('index'))
+
+
+@app.route('/debug_tenpai', methods=['POST'])
+def debug_tenpai():
+	"""デバッグ用: Player0 に聴牌配牌を与えて局を再構成"""
+	game = get_game_from_session()
+	if game is None:
+		return jsonify({'error': 'No game in progress'}), 400
+
+	try:
+		game.start_debug_tenpai_for_player0()
+	except ValueError as e:
+		return jsonify({'error': str(e)}), 400
+
+	save_game_to_session(game)
+	return jsonify(build_state_response(game, {'ok': True, 'action': 'debug_tenpai'}))
 
 
 @app.route('/', methods=['GET', 'POST'])
@@ -167,10 +210,18 @@ def index():
 		last_discarded=game.last_discarded,
 		agari_tiles_view=agari_tiles_view,
 		dora_indicator=game.dora_indicator,
+		dora_indicators=game.get_revealed_dora_indicators(),
+		round_wind=game.round_wind,
+		round_wind_label=wind_to_label(game.round_wind),
+		dealer_id=game.dealer_id,
+		honba=game.honba,
+		seat_winds=game.get_seat_winds(),
+		seat_wind_labels=[wind_to_label(w) for w in game.get_seat_winds()],
 		remaining_draws=max(0, len(game.wall)),
 		can_riichi=can_riichi,
 		is_riichi=[p.is_riichi for p in game.players],
 		ippatsu_eligible=getattr(game, 'ippatsu_eligible', [False] * game.num_players),
+		furiten_list=[game.is_furiten(i) for i in range(game.num_players)],
 	)
 
 
@@ -276,7 +327,8 @@ def check_agari():
 	# アガり判定＋点数計算＋裏ドラ
 	win_result = game.check_and_calculate_win(player_id, win_tile, is_tsumo, is_riichi=is_riichi)
 	win_result['is_tsumo'] = is_tsumo
-	return jsonify(win_result)
+	save_game_to_session(game)
+	return jsonify(build_state_response(game, win_result))
 
 
 if __name__ == '__main__':

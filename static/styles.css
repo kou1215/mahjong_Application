@@ -147,6 +147,10 @@ body {
     background: #d32f2f;
     color: #fff;
 }
+.furiten-badge {
+    background: #607d8b;
+    color: #fff;
+}
 .my-tiles {
     display: flex;
     gap: 8px;
@@ -231,28 +235,6 @@ body {
     z-index: 1000;
     text-align: center;
     box-shadow: 0 4px 15px rgba(0,0,0,0.5);
-}
-
-/* アガリ判定ボタン（画面右下に固定） */
-#agari-btn {
-    position: fixed;
-    bottom: 30px;
-    right: 30px;
-    padding: 15px 25px;
-    background: #4CAF50;
-    color: white;
-    font-size: 1.2em;
-    font-weight: bold;
-    border: none;
-    border-radius: 8px;
-    cursor: pointer;
-    z-index: 100;
-    box-shadow: 0 4px 8px rgba(0,0,0,0.3);
-    transition: transform 0.1s, background 0.2s;
-}
-#agari-btn:hover {
-    background: #45a049;
-    transform: scale(1.05);
 }
 
 @media (max-width: 900px) {

@@ -26,20 +26,8 @@ class Player:
 
 	@property
 	def is_menzen(self) -> bool:
-		"""門前（副露なし、暗槓はOK）かどうか判定"""
-		# ポン・チー・明カンがなければ門前。暗槓（4枚同じ牌）はOK。
-		for meld in self.melds:
-			if len(meld) == 3:
-				# ポンまたはチー
-				return False
-			if len(meld) == 4:
-				# 4枚のカンが全て同じ牌なら暗槓、そうでなければ明カン
-				if not all(tile == meld[0] for tile in meld):
-					return False  # 不正なメルド
-				# 暗槓はOK、明カンは門前でない（本来は区別必要だが簡易実装）
-				# ここでは全て暗槓扱い
-				continue
-		return True
+		"""門前（副露なし）かどうか判定。"""
+		return len(self.melds) == 0
 
 	def add_tile(self, tile: str) -> None:
 		"""ツモ牌を追加"""

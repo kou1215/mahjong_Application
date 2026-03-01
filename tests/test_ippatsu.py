@@ -30,7 +30,8 @@ def test_ippatsu_scoring_enabled_only_when_flag_true():
     assert no_ippatsu['valid']
     assert with_ippatsu['valid']
     assert with_ippatsu['han'] == no_ippatsu['han'] + 1
-    assert any('ippatsu' in y.lower() for y in with_ippatsu['yaku'])
+    assert '立直' in with_ippatsu['yaku']
+    assert '一発' in with_ippatsu['yaku']
 
 
 def test_ippatsu_is_cleared_when_call_happens():
@@ -119,6 +120,7 @@ def test_ron_response_includes_ura_dora_indicator_for_riichi():
     game.players[winner_id].is_riichi = True
     game.last_discarded = '1m'
     game.received_calls = {str(winner_id): {'action': 'ron', 'tiles': ['1m']}}
+    expected_ura = game.dead_wall[5]
 
     # 点数計算に成功するよう簡易モック
     def mock_estimate(*args, **kwargs):
@@ -130,4 +132,25 @@ def test_ron_response_includes_ura_dora_indicator_for_riichi():
     assert result['ok'] is True
     assert result['action'] == 'ron'
     assert 'ura_dora_indicator' in result
-    assert result['ura_dora_indicator'] == game.dead_wall[5]
+    assert result['ura_dora_indicator'] == expected_ura
+    assert result.get('new_hand_started') is True
+
+
+def test_ai_ron_is_auto_resolved_on_discard():
+    game = Game(num_players=4, human_player_id=0)
+    game.start_game()
+
+    game.current_turn = 0
+    game.players[0].hand.tiles = ['2m', '3m', '4m', '5m', '6m', '7m', '8m', '9m', '1p', '2p', '3p', '4p', '5p', '1p']
+    game.players[1].hand.tiles = ['1m', '1m', '1m', '2m', '3m', '4m', '5m', '6m', '7m', '8m', '9m', '1p', '1p']
+
+    def mock_estimate(*args, **kwargs):
+        return {'valid': True, 'han': 3, 'fu': 30, 'cost': {'main': 3900, 'total': 3900}, 'limit': 'なし', 'yaku': ['Riichi']}
+
+    game.estimate_agari_value = mock_estimate  # type: ignore[assignment]
+
+    result = game.process_discard(discard_index=13)
+
+    assert result.get('agari') is True
+    assert result.get('action') == 'ron'
+    assert result.get('player_id') == 1

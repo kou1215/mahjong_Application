@@ -7,6 +7,7 @@ from mahjong.agari import Agari as MahjongAgari
 from mahjong.tile import TilesConverter
 from mahjong.hand_calculating.hand import HandCalculator
 from mahjong.hand_calculating.hand_config import HandConfig
+from mahjong.hand_calculating.hand_config import OptionalRules
 from mahjong.meld import Meld
 from mahjong.constants import EAST, SOUTH, WEST, NORTH
 
@@ -15,6 +16,64 @@ from models.tile_utils import TILE_INDEX
 
 class AgariChecker:
     """アガり判定と手数計算のラッパークラス"""
+
+    YAKU_DISPLAY_MAP = {
+        'Riichi': '立直',
+        'Double Riichi': 'ダブル立直',
+        'Ippatsu': '一発',
+        'Menzen Tsumo': '門前清自摸和',
+        'Pinfu': '平和',
+        'Tanyao': '断么九',
+        'Iipeiko': '一盃口',
+        'Ryanpeikou': '二盃口',
+        'Haitei Raoyue': '海底摸月',
+        'Houtei Raoyui': '河底撈魚',
+        'Rinshan Kaihou': '嶺上開花',
+        'Chankan': '槍槓',
+        'Nagashi Mangan': '流し満貫',
+        'Chiitoitsu': '七対子',
+        'Toitoi': '対々和',
+        'San Ankou': '三暗刻',
+        'San Kantsu': '三槓子',
+        'Sanshoku Doujun': '三色同順',
+        'Sanshoku Doukou': '三色同刻',
+        'Ittsu': '一気通貫',
+        'Chantai': '混全帯么九',
+        'Junchan': '純全帯么九',
+        'Honroutou': '混老頭',
+        'Shou Sangen': '小三元',
+        'Honitsu': '混一色',
+        'Chinitsu': '清一色',
+        'Yakuhai (haku)': '役牌（白）',
+        'Yakuhai (hatsu)': '役牌（發）',
+        'Yakuhai (chun)': '役牌（中）',
+        'Yakuhai (east)': '役牌（東）',
+        'Yakuhai (south)': '役牌（南）',
+        'Yakuhai (west)': '役牌（西）',
+        'Yakuhai (north)': '役牌（北）',
+        'Yakuhai (wind of place)': '役牌（自風）',
+        'Yakuhai (wind of round)': '役牌（場風）',
+        'Dora': 'ドラ',
+        'Aka Dora': '赤ドラ',
+        'Renhou': '人和',
+        'Tenhou': '天和',
+        'Chiihou': '地和',
+        'Kokushi Musou': '国士無双',
+        'Kokushi Musou 13-Men': '国士無双十三面待ち',
+        'Suuankou': '四暗刻',
+        'Suu Ankou': '四暗刻',
+        'Suuankou Tanki': '四暗刻単騎',
+        'Suu Ankou Tanki': '四暗刻単騎',
+        'Daisangen': '大三元',
+        'Shousuushii': '小四喜',
+        'Daisuushii': '大四喜',
+        'Tsuuiisou': '字一色',
+        'Ryuuiisou': '緑一色',
+        'Chinroutou': '清老頭',
+        'Chuuren Poutou': '九蓮宝燈',
+        'Junsei Chuuren Poutou': '純正九蓮宝燈',
+        'Suukantsu': '四槓子',
+    }
     
     # 風は mahjong.constants の EAST/SOUTH/WEST/NORTH を使用する
 
@@ -122,12 +181,13 @@ class AgariChecker:
         if len(tiles) not in (3, 4):
             return None
 
+        # カン（4枚）は和了判定・点数計算上は3枚面子（ポン相当）として扱う
+        if len(tiles) == 4 and all(t == tiles[0] for t in tiles):
+            tiles = [tiles[0], tiles[1], tiles[2]]
+
         tile_136 = self._tiles_to_136_array(tiles)
         if len(tile_136) != len(tiles):
             return None
-
-        if len(tiles) == 4:
-            return Meld(meld_type=Meld.KAN, tiles=tile_136, opened=True)
 
         if all(t == tiles[0] for t in tiles):
             return Meld(meld_type=Meld.PON, tiles=tile_136, opened=True)
@@ -154,6 +214,7 @@ class AgariChecker:
         dora_indicators: Optional[List[str]] = None,
         is_riichi: bool = False,
         is_ippatsu: bool = False,
+        honba_count: int = 0,
     ) -> Optional[Dict[str, Any]]:
         """
         アガり手の点数を計算
@@ -230,7 +291,14 @@ class AgariChecker:
                 }
             
             # HandConfig を設定（player_wind/round_wind/リーチは HandConfig に渡す）
-            config = HandConfig(is_tsumo=is_tsumo, player_wind=player_wind, round_wind=round_wind)
+            # 喰いタンあり（オープンタンヤオ有効）
+            config = HandConfig(
+                is_tsumo=is_tsumo,
+                player_wind=player_wind,
+                round_wind=round_wind,
+                tsumi_number=max(0, int(honba_count)),
+                options=OptionalRules(has_open_tanyao=True),
+            )
             config.is_dealer = is_dealer
             config.is_riichi = is_riichi
             config.is_ippatsu = bool(is_ippatsu and is_riichi)
@@ -255,6 +323,8 @@ class AgariChecker:
             # limit を翻数から判定
             limit = self._calculate_limit(result.han)
             
+            yaku_names = [yaku.name for yaku in yaku_list]
+            display_yaku = [self.YAKU_DISPLAY_MAP.get(name, name) for name in yaku_names]
             return {
                 'valid': result.error is None,
                 'error': result.error,
@@ -262,7 +332,7 @@ class AgariChecker:
                 'fu': result.fu,
                 'cost': result.cost,  # 詳細な支払い情報をそのまま返す
                 'limit': limit,
-                'yaku': [yaku.name for yaku in yaku_list],
+                'yaku': display_yaku,
             }
         except Exception as e:
             return {

@@ -73,18 +73,25 @@
     <div id="game-info">
       <div id="turn-indicator">手番: Player <span id="turn-player">{{ current_turn if hands_view else 0 }}</span></div>
       <div id="phase-indicator">状態: <span id="phase-text">{{ phase if hands_view else 'discard' }}</span></div>
+      <div id="round-wind">場風: <span id="round-wind-text">{{ round_wind_label if round_wind_label is defined else '' }}</span></div>
+      <div id="honba">本場: <span id="honba-count">{{ honba if honba is defined else 0 }}</span></div>
       <div id="dora-indicator-area">
         ドラ表示牌:
-        {% if hands_view and dora_indicator %}
-          <img id="dora-indicator-img" class="tile dora-tile" src="/static/tiles/{{ dora_indicator }}.png" alt="{{ dora_indicator }}" style="width: 40px;" onerror="handleImageError(this, '{{ dora_indicator }}')">
-        {% else %}
-          <span id="dora-indicator-img"></span>
+        <span id="dora-indicators-wrap">
+        {% if hands_view and dora_indicators %}
+          {% for d in dora_indicators %}
+            <img class="tile dora-tile" src="/static/tiles/{{ d }}.png" alt="{{ d }}" style="width: 40px;" onerror="handleImageError(this, '{{ d }}')">
+          {% endfor %}
+        {% elif hands_view and dora_indicator %}
+          <img class="tile dora-tile" src="/static/tiles/{{ dora_indicator }}.png" alt="{{ dora_indicator }}" style="width: 40px;" onerror="handleImageError(this, '{{ dora_indicator }}')">
         {% endif %}
+        </span>
       </div>
       <div id="remaining-draws">残りツモ回数: <span id="remaining-draws-count">{{ remaining_draws if hands_view else '' }}</span></div>
       <form action="/reset" method="get" style="display:inline; margin-left:20px;">
         <button type="submit">新規対局（リセット）</button>
       </form>
+      <button type="button" onclick="applyDebugTenpai()" style="margin-left:8px;">デバッグ配牌</button>
     </div>
 
     <div id="opponents-row">
@@ -140,7 +147,6 @@
             {% endfor %}
           </div>
           <button type="button" id="riichi-btn" style="display: {% if can_riichi %}inline-block{% else %}none{% endif %}; background-color: #9c27b0; color: white; margin-right: 10px; margin-top: 8px; margin-bottom: 8px;" onclick="toggleRiichi()">🔥 リーチ</button>
-          <button type="button" id="agari-btn" onclick="checkAgari()">🎯 アガり判定</button>
           <div id="available-calls-area" style="margin-top:12px;"></div>
         {% endif %}
       {% endif %}
@@ -177,7 +183,11 @@
     const lastDiscarded = JSON.parse('{{ last_discarded | tojson | safe if last_discarded else "null" }}');
     const initialIsRiichi = JSON.parse('{{ is_riichi | tojson | safe if is_riichi is defined else "[false, false, false, false]" }}');
     const initialIppatsuEligible = JSON.parse('{{ ippatsu_eligible | tojson | safe if ippatsu_eligible is defined else "[false, false, false, false]" }}');
+    const initialFuritenList = JSON.parse('{{ furiten_list | tojson | safe if furiten_list is defined else "[false, false, false, false]" }}');
     const initialCanRiichi = JSON.parse('{{ can_riichi | tojson | safe if can_riichi is defined else "false" }}');
+    const initialSeatWindLabels = JSON.parse('{{ seat_wind_labels | tojson | safe if seat_wind_labels is defined else "[\"東\", \"南\", \"西\", \"北\"]" }}');
+    const initialRoundWindLabel = JSON.parse('{{ round_wind_label | tojson | safe if round_wind_label is defined else "\"東\"" }}');
+    const initialHonba = parseInt('{{ honba if honba is defined else 0 }}');
   
   // 数値と文字列も引用符で囲むことでJSの文法エラーを防ぐ
     let currentTurn = parseInt('{{ current_turn if current_turn is defined else 0 }}');
@@ -185,29 +195,39 @@
 
     const discards = handsView ? handsView.map(h => h.discards) : [[], [], [], []];
     const initialMelds = handsView ? handsView.map(h => h.melds) : [[], [], [], []];
+    const initialShantenList = handsView ? handsView.map(h => h.shanten) : [null, null, null, null];
     const initialAgariTiles = agariTilesView || [[], [], [], []];
     const initialPendingCalls = pendingCalls || [];
     const initialLastDiscarded = lastDiscarded || null;
     let lastDrawnTile = null;
     window.player0_draw = null;
+    window.shantenValues = initialShantenList;
     let is_riichi = initialIsRiichi;
     let ippatsu_eligible = initialIppatsuEligible;
+    let furiten_list = initialFuritenList;
     let can_riichi = initialCanRiichi;
+    let seatWindLabels = initialSeatWindLabels;
+    let roundWindLabel = initialRoundWindLabel;
+    let honbaCount = Number.isNaN(initialHonba) ? 0 : initialHonba;
 
-    function updatePlayerStatusBadges(isRiichiList, ippatsuList) {
+    function updatePlayerStatusBadges(isRiichiList, ippatsuList, furitenList) {
       for (let p = 0; p < 4; p++) {
         const labelElem = (p === 0)
           ? document.querySelector('.my-label')
           : document.querySelector('#opponent-' + p + ' .opponent-label');
         if (!labelElem) continue;
 
-        const baseText = (p === 0) ? 'あなた (Player 0)' : ('Player ' + p);
+        const windLabel = (seatWindLabels && seatWindLabels[p]) ? seatWindLabels[p] : '';
+        const baseText = (p === 0) ? ('あなた (Player 0) [' + windLabel + ']') : ('Player ' + p + ' [' + windLabel + ']');
         let html = baseText;
         if (isRiichiList && isRiichiList[p]) {
           html += ' <span class="status-badge riichi-badge">リーチ</span>';
         }
         if (ippatsuList && ippatsuList[p]) {
           html += ' <span class="status-badge ippatsu-badge">一発有効中</span>';
+        }
+        if (furitenList && furitenList[p]) {
+          html += ' <span class="status-badge furiten-badge">フリテン</span>';
         }
         labelElem.innerHTML = html;
       }
@@ -262,27 +282,68 @@
       });
     }
 
-    // アガり形判定でボタン色を更新
-    function updateAgariButton() {
-      const button = document.getElementById('agari-btn'); // IDを正しく修正
-      if (!button) return;
-      
-      // Player 0 のシャンテン数を取得
-      const shanten = window.shantenValues ? window.shantenValues[0] : null;
-      
-      if (shanten === -1) {
-        // アガり形：ボタンを目立つ色（オレンジ系）に変更
-        button.style.background = '#FF6B35';
-        button.title = 'アガり形です！';
-      } else if (shanten === 0) {
-        // テンパイ：ボタンを注意色に
-        button.style.background = '#FFB703';
-        button.title = 'テンパイしています';
-      } else {
-        // 通常状態：緑
-        button.style.background = '#4CAF50';
-        button.title = '';
+    function syncDiscardsFromServer(data) {
+      if (!data || !data.discards || !Array.isArray(data.discards)) return;
+      for (let p = 0; p < discards.length; p++) {
+        discards[p] = Array.isArray(data.discards[p]) ? [...data.discards[p]] : [];
+        renderDiscards(p);
       }
+    }
+
+    function renderDoraIndicators(doraIndicators) {
+      const wrap = document.getElementById('dora-indicators-wrap');
+      if (!wrap) return;
+      wrap.innerHTML = '';
+
+      const indicators = Array.isArray(doraIndicators) ? doraIndicators : [];
+      indicators.forEach(tile => {
+        const img = document.createElement('img');
+        img.className = 'tile dora-tile';
+        img.style.width = '40px';
+        img.src = '/static/tiles/' + tile + '.png';
+        img.alt = tile;
+        img.onerror = function() { handleImageError(this, tile); };
+        wrap.appendChild(img);
+      });
+    }
+
+    function canShowTsumoAction() {
+      return currentTurn === 0 && gamePhase === 'discard' && !!lastDrawnTile;
+    }
+
+    function renderSelfActions() {
+      const area = document.getElementById('available-calls-area');
+      if (!area) return;
+      area.innerHTML = '';
+
+      if (!canShowTsumoAction()) {
+        return;
+      }
+
+      const box = document.createElement('div');
+      box.style.margin = '6px 0';
+      box.style.padding = '6px';
+      box.style.background = 'rgba(255,255,255,0.05)';
+      box.style.borderRadius = '6px';
+
+      const label = document.createElement('strong');
+      label.innerText = 'Player 0:';
+      box.appendChild(label);
+
+      const tsumoBtn = document.createElement('button');
+      tsumoBtn.innerText = 'ツモ';
+      tsumoBtn.onclick = () => checkAgari();
+      box.appendChild(tsumoBtn);
+
+      area.appendChild(box);
+    }
+
+    function renderActionArea(availableCalls, discardedTile) {
+      if (availableCalls && availableCalls.length > 0) {
+        renderAvailableCalls(availableCalls, discardedTile);
+        return;
+      }
+      renderSelfActions();
     }
 
     // 誤って消えていた discardTile 関数を復元・修正
@@ -303,8 +364,12 @@
 
       is_riichi = data.is_riichi || is_riichi;
       ippatsu_eligible = data.ippatsu_eligible || ippatsu_eligible;
+      furiten_list = data.furiten_list || furiten_list;
       can_riichi = (typeof data.can_riichi !== 'undefined') ? data.can_riichi : can_riichi;
-      updatePlayerStatusBadges(is_riichi, ippatsu_eligible);
+      seatWindLabels = data.seat_wind_labels || seatWindLabels;
+      roundWindLabel = (typeof data.round_wind_label !== 'undefined') ? data.round_wind_label : roundWindLabel;
+      honbaCount = (typeof data.honba !== 'undefined') ? data.honba : honbaCount;
+      updatePlayerStatusBadges(is_riichi, ippatsu_eligible, furiten_list);
 
       // リーチボタンの表示制御
       const riichiBtn = document.getElementById('riichi-btn');
@@ -327,45 +392,15 @@
       window.shantenValues = data.shanten_list;
       lastDrawnTile = data.next_draw;
 
-      // if there are available calls show UI
-      if (data.available_calls && data.available_calls.length > 0) {
-        renderAvailableCalls(data.available_calls, data.discarded_tile);
-      } else {
-        const area = document.getElementById('available-calls-area');
-        if (area) area.innerHTML = '';
-      }
-
       updateHands(data.hands, data.shanten_list);
-      updateDiscards(data, data.auto_log);
+      syncDiscardsFromServer(data);
       displayAllMelds(data.melds || [[], [], [], []]);
       renderAgariTiles((data.agari_tiles && data.agari_tiles[0]) ? data.agari_tiles[0] : []);
+      renderDoraIndicators(data.dora_indicators || (data.dora_indicator ? [data.dora_indicator] : []));
       refreshTurnInfo();
+      renderActionArea(data.available_calls, data.discarded_tile);
 
-      // update UI
-      updateAgariButton();
-
-      const doraImgArea = document.getElementById('dora-indicator-area');
-      if (doraImgArea) {
-        let doraImg = document.getElementById('dora-indicator-img');
-        if (doraImg) {
-          if (data.dora_indicator) {
-            doraImg.src = '/static/tiles/' + data.dora_indicator + '.png';
-            doraImg.alt = data.dora_indicator;
-            doraImg.onerror = function() { handleImageError(this, data.dora_indicator); };
-          } else {
-            doraImg.src = ''; doraImg.alt = '';
-          }
-        } else if (data.dora_indicator) {
-          doraImg = document.createElement('img');
-          doraImg.id = 'dora-indicator-img';
-          doraImg.className = 'tile dora-tile';
-          doraImg.style.width = '40px';
-          doraImg.src = '/static/tiles/' + data.dora_indicator + '.png';
-          doraImg.alt = data.dora_indicator;
-          doraImg.onerror = function() { handleImageError(this, data.dora_indicator); };
-          doraImgArea.appendChild(doraImg);
-        }
-      }
+      renderDoraIndicators(data.dora_indicators || (data.dora_indicator ? [data.dora_indicator] : []));
 
       if (typeof data.remaining_draws !== 'undefined') {
         const drawsElem = document.getElementById('remaining_draws-count');
@@ -376,15 +411,65 @@
         document.getElementById('gameover-message').style.display = 'block';
         disableTileClickHandlers();
       } else {
+        document.getElementById('gameover-message').style.display = 'none';
         setTileClickHandlers();
       }
+    }
+
+    async function applyDebugTenpai() {
+      const res = await fetch('/debug_tenpai', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' }
+      });
+      if (!res.ok) {
+        alert('デバッグ配牌エラー: ' + (await res.text()));
+        return;
+      }
+
+      const data = await res.json();
+      is_riichi = data.is_riichi || is_riichi;
+      ippatsu_eligible = data.ippatsu_eligible || ippatsu_eligible;
+      furiten_list = data.furiten_list || furiten_list;
+      can_riichi = (typeof data.can_riichi !== 'undefined') ? data.can_riichi : can_riichi;
+      seatWindLabels = data.seat_wind_labels || seatWindLabels;
+      roundWindLabel = (typeof data.round_wind_label !== 'undefined') ? data.round_wind_label : roundWindLabel;
+      honbaCount = (typeof data.honba !== 'undefined') ? data.honba : honbaCount;
+
+      currentTurn = data.current_turn;
+      gamePhase = data.phase;
+      window.player0_draw = data.next_draw;
+      window.shantenValues = data.shanten_list;
+      lastDrawnTile = data.next_draw;
+
+      updateHands(data.hands, data.shanten_list);
+      syncDiscardsFromServer(data);
+      displayAllMelds(data.melds || [[], [], [], []]);
+      renderAgariTiles((data.agari_tiles && data.agari_tiles[0]) ? data.agari_tiles[0] : []);
+      refreshTurnInfo();
+      renderActionArea(data.available_calls, data.discarded_tile);
+      updatePlayerStatusBadges(is_riichi, ippatsu_eligible, furiten_list);
+
+      renderDoraIndicators(data.dora_indicators || (data.dora_indicator ? [data.dora_indicator] : []));
+
+      if (typeof data.remaining_draws !== 'undefined') {
+        const drawsElem = document.getElementById('remaining-draws-count');
+        if (drawsElem) drawsElem.textContent = data.remaining_draws;
+      }
+
+      document.getElementById('gameover-message').style.display = 'none';
+      setTileClickHandlers();
+      alert('デバッグ配牌を適用しました（Player 0 聴牌）。');
     }
 
     function refreshTurnInfo() {
       const turnElem = document.getElementById('turn-player');
       const phaseElem = document.getElementById('phase-text');
+      const roundWindElem = document.getElementById('round-wind-text');
+      const honbaElem = document.getElementById('honba-count');
       if (turnElem) turnElem.textContent = currentTurn;
       if (phaseElem) phaseElem.textContent = gamePhase;
+      if (roundWindElem) roundWindElem.textContent = roundWindLabel;
+      if (honbaElem) honbaElem.textContent = honbaCount;
     }
 
     function renderAvailableCalls(availableCalls, discardedTile) {
@@ -464,10 +549,14 @@
 
       is_riichi = data.is_riichi || is_riichi;
       ippatsu_eligible = data.ippatsu_eligible || ippatsu_eligible;
+      furiten_list = data.furiten_list || furiten_list;
       can_riichi = (typeof data.can_riichi !== 'undefined') ? data.can_riichi : can_riichi;
-      updatePlayerStatusBadges(is_riichi, ippatsu_eligible);
+      seatWindLabels = data.seat_wind_labels || seatWindLabels;
+      roundWindLabel = (typeof data.round_wind_label !== 'undefined') ? data.round_wind_label : roundWindLabel;
+      honbaCount = (typeof data.honba !== 'undefined') ? data.honba : honbaCount;
+      updatePlayerStatusBadges(is_riichi, ippatsu_eligible, furiten_list);
 
-      if (action === 'ron' || data.agari) {
+      if (data.agari || data.action === 'ron') {
         showAgariResult({
           agari: !!data.agari,
           value: data.value,
@@ -484,16 +573,12 @@
       window.player0_draw = data.next_draw;
       lastDrawnTile = data.next_draw;
       updateHands(data.hands, data.shanten_list);
+      syncDiscardsFromServer(data);
       displayAllMelds(data.melds || [[], [], [], []]);
       renderAgariTiles((data.agari_tiles && data.agari_tiles[0]) ? data.agari_tiles[0] : []);
       refreshTurnInfo();
 
-      if (data.available_calls && data.available_calls.length > 0) {
-        renderAvailableCalls(data.available_calls, data.discarded_tile);
-      } else {
-        const area = document.getElementById('available-calls-area');
-        if (area) area.innerHTML = '';
-      }
+      renderActionArea(data.available_calls, data.discarded_tile);
 
       if (typeof data.remaining_draws !== 'undefined') {
         const drawsElem = document.getElementById('remaining-draws-count');
@@ -504,6 +589,7 @@
         document.getElementById('gameover-message').style.display = 'block';
         disableTileClickHandlers();
       } else {
+        document.getElementById('gameover-message').style.display = 'none';
         setTileClickHandlers();
       }
     }
@@ -611,6 +697,39 @@
         return;
       }
       const data = await res.json();
+      seatWindLabels = data.seat_wind_labels || seatWindLabels;
+      roundWindLabel = (typeof data.round_wind_label !== 'undefined') ? data.round_wind_label : roundWindLabel;
+      honbaCount = (typeof data.honba !== 'undefined') ? data.honba : honbaCount;
+      is_riichi = data.is_riichi || is_riichi;
+      ippatsu_eligible = data.ippatsu_eligible || ippatsu_eligible;
+      furiten_list = data.furiten_list || furiten_list;
+      can_riichi = (typeof data.can_riichi !== 'undefined') ? data.can_riichi : can_riichi;
+
+      currentTurn = data.current_turn;
+      gamePhase = data.phase;
+      window.shantenValues = data.shanten_list;
+      window.player0_draw = data.next_draw;
+      lastDrawnTile = data.next_draw;
+
+      updateHands(data.hands, data.shanten_list);
+      syncDiscardsFromServer(data);
+      displayAllMelds(data.melds || [[], [], [], []]);
+      renderAgariTiles((data.agari_tiles && data.agari_tiles[0]) ? data.agari_tiles[0] : []);
+      renderDoraIndicators(data.dora_indicators || (data.dora_indicator ? [data.dora_indicator] : []));
+
+      renderActionArea(data.available_calls, data.discarded_tile);
+
+      refreshTurnInfo();
+      updatePlayerStatusBadges(is_riichi, ippatsu_eligible, furiten_list);
+
+      if (data.is_game_over) {
+        document.getElementById('gameover-message').style.display = 'block';
+        disableTileClickHandlers();
+      } else {
+        document.getElementById('gameover-message').style.display = 'none';
+        setTileClickHandlers();
+      }
+
       showAgariResult(data);
     }
 
@@ -695,20 +814,6 @@ function updateHands(hands, shantenList) {
       } // ← forループの終わり
     }   
 
-    function updateDiscards(data, auto_log) {
-      if (data.discarded_tile !== undefined && data.discarded_tile !== null) {
-        const discarder = (typeof data.discarder_id === 'number') ? data.discarder_id : 0;
-        discards[discarder].push(data.discarded_tile);
-        renderDiscards(discarder);
-      }
-      if (auto_log) {
-        auto_log.forEach(log => {
-          discards[log.player].push(log.discarded);
-          renderDiscards(log.player);
-        });
-      }
-    }
-
     function renderDiscards(player) {
       let div = document.getElementById('discards-' + player);
       if (!div) return;
@@ -725,16 +830,13 @@ function updateHands(hands, shantenList) {
     // 初期化
     if (document.querySelectorAll('img[data-player][data-index]').length > 0) {
       setTileClickHandlers();
-      updateAgariButton(); // 初期化時にもボタンの色を判定させる
     }
-    updatePlayerStatusBadges(is_riichi, ippatsu_eligible);
+    updatePlayerStatusBadges(is_riichi, ippatsu_eligible, furiten_list);
 
     refreshTurnInfo();
     displayAllMelds(initialMelds);
     renderAgariTiles((initialAgariTiles && initialAgariTiles[0]) ? initialAgariTiles[0] : []);
-    if (gamePhase === 'call_wait' && initialPendingCalls.length > 0) {
-      renderAvailableCalls(initialPendingCalls, initialLastDiscarded);
-    }
+    renderActionArea(initialPendingCalls, initialLastDiscarded);
 
     // 初期捨て牌を表示
     for (let p = 0; p < discards.length; ++p) {
