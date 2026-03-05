@@ -34,9 +34,18 @@ class Game:
 		self.round_wind: int = EAST  # 場風（mahjong.constants の EAST/SOUTH/... を使用）
 		self.dealer_id: int = 0  # 現在の親
 		self.honba: int = 0  # 本場
+		self.kyotaku_riichi: int = 0  # 供託リーチ棒本数
 		self.kan_count: int = 0  # この局で成立したカン数
 		self.current_turn = 0
 		self.is_game_over = False
+		self.final_settlement: Optional[Dict[str, Any]] = None
+		self.dealer_experience: List[bool] = [False] * self.num_players
+		self.end_game_config: Dict[str, bool] = {
+			'require_all_dealers_experienced': True,
+			'require_all_non_negative_points': True,
+			'end_on_negative_points': True,
+			'ignore_dealer_win_for_end': True,
+		}
 		self._agari_checker = AgariChecker()
 		self._call_checker = CallChecker()
 		self.last_discarded: Optional[str] = None
@@ -52,6 +61,76 @@ class Game:
 		self.ippatsu_eligible: List[bool] = [False] * self.num_players
 		self.riichi_locked_hands: List[Optional[List[str]]] = [None] * self.num_players
 		self.riichi_wait_tiles: List[List[str]] = [[] for _ in range(self.num_players)]
+		if 0 <= self.dealer_id < self.num_players:
+			self.dealer_experience[self.dealer_id] = True
+
+	def set_end_game_conditions(
+		self,
+		require_all_dealers_experienced: bool = True,
+		require_all_non_negative_points: bool = True,
+		end_on_negative_points: bool = True,
+		ignore_dealer_win_for_end: bool = True,
+	) -> None:
+		"""終局条件設定を更新する。"""
+		self.end_game_config = {
+			'require_all_dealers_experienced': bool(require_all_dealers_experienced),
+			'require_all_non_negative_points': bool(require_all_non_negative_points),
+			'end_on_negative_points': bool(end_on_negative_points),
+			'ignore_dealer_win_for_end': bool(ignore_dealer_win_for_end),
+		}
+
+	def _get_end_game_config(self) -> Dict[str, bool]:
+		"""現在の終局条件設定を返す。"""
+		return dict(self.end_game_config)
+
+	def _mark_dealer_experience(self, dealer_id: int) -> None:
+		"""指定プレイヤーが親を経験済みであることを記録する。"""
+		if 0 <= dealer_id < self.num_players:
+			self.dealer_experience[dealer_id] = True
+
+	def _should_end_game_after_agari(self, winner_id: int, winner_was_dealer: bool) -> bool:
+		"""和了後に終局すべきかを設定に基づいて判定する。"""
+		cfg = self.end_game_config or {}
+
+		# 誰かが飛んだ（0点未満）場合は、和了後の点数移動を反映したうえで即終局。
+		if cfg.get('end_on_negative_points', True) and any(p.points < 0 for p in self.players):
+			return True
+
+		if cfg.get('ignore_dealer_win_for_end', True) and winner_was_dealer:
+			return False
+
+		if cfg.get('require_all_dealers_experienced', True) and not all(self.dealer_experience):
+			return False
+
+		if cfg.get('require_all_non_negative_points', True):
+			if any(p.points < 0 for p in self.players):
+				return False
+
+		return True
+
+	def _build_final_settlement(self) -> Dict[str, Any]:
+		"""終局時の精算情報（順位・最終点・差分）を作成する。"""
+		sorted_players = sorted(self.players, key=lambda p: (-p.points, p.player_id))
+		ranking: List[Dict[str, int]] = []
+		for rank, p in enumerate(sorted_players, start=1):
+			ranking.append({
+				'rank': rank,
+				'player_id': p.player_id,
+				'points': p.points,
+				'delta': p.points - 25000,
+			})
+
+		return {
+			'final_points': self._build_points_snapshot(),
+			'ranking': ranking,
+			'kyotaku_riichi': self.kyotaku_riichi,
+		}
+
+	def _finalize_game(self) -> Dict[str, Any]:
+		"""終局処理を確定して精算情報を返す。"""
+		self.is_game_over = True
+		self.final_settlement = self._build_final_settlement()
+		return self.final_settlement
 
 	def _initialize_players(self) -> None:
 		"""プレイヤーを初期化"""
@@ -71,6 +150,7 @@ class Game:
 			player.is_riichi = False
 		self.current_turn = self.dealer_id
 		self.is_game_over = False
+		self.final_settlement = None
 		self.last_discarded = None
 		self.phase = 'discard'
 		self.pending_calls = []
@@ -81,6 +161,7 @@ class Game:
 		self.riichi_locked_hands = [None] * self.num_players
 		self.riichi_wait_tiles = [[] for _ in range(self.num_players)]
 		self.kan_count = 0
+		self._mark_dealer_experience(self.dealer_id)
 
 		# 王牌（dead_wall）を山札の最後14枚から切り出す
 		self.dead_wall = full_wall[-14:]
@@ -201,9 +282,85 @@ class Game:
 		self.honba = 0
 		old_dealer = self.dealer_id
 		self.dealer_id = (self.dealer_id + 1) % self.num_players
+		self._mark_dealer_experience(self.dealer_id)
 		# 親が一周したら場風を進める
 		if old_dealer == self.num_players - 1 and self.dealer_id == 0:
 			self._advance_round_wind()
+
+	def _build_points_snapshot(self) -> List[int]:
+		"""現在の全プレイヤー持ち点を返す。"""
+		return [p.points for p in self.players]
+
+	def _apply_riichi_deposit(self, player_id: int) -> bool:
+		"""リーチ供託を支払い、成功時は True を返す。"""
+		if player_id < 0 or player_id >= self.num_players:
+			return False
+		player = self.players[player_id]
+		if player.points < 1000:
+			return False
+		player.points -= 1000
+		self.kyotaku_riichi += 1
+		return True
+
+	def _apply_kyotaku_to_winner(self, winner_id: int) -> Optional[Dict[str, int]]:
+		"""供託リーチ棒を和了者へ渡す。"""
+		if self.kyotaku_riichi <= 0:
+			return None
+		amount = self.kyotaku_riichi * 1000
+		self.players[winner_id].points += amount
+		self.kyotaku_riichi = 0
+		return {'from': -1, 'to': winner_id, 'amount': amount}
+
+	def _apply_agari_point_transfer(
+		self,
+		winner_id: int,
+		value: Dict[str, Any],
+		is_tsumo: bool,
+		loser_id: Optional[int] = None,
+	) -> List[Dict[str, int]]:
+		"""アガリ時の点数移動を適用し、移動内訳を返す。"""
+		if winner_id < 0 or winner_id >= self.num_players:
+			return []
+
+		cost = (value or {}).get('cost', {}) if value else {}
+		movements: List[Dict[str, int]] = []
+
+		if is_tsumo:
+			main = int(cost.get('main', 0)) + int(cost.get('main_bonus', 0))
+			additional = int(cost.get('additional', 0)) + int(cost.get('additional_bonus', 0))
+			if main <= 0 and additional <= 0:
+				return []
+
+			total_gain = 0
+			is_winner_dealer = (winner_id == self.dealer_id)
+			for pid in range(self.num_players):
+				if pid == winner_id:
+					continue
+				payment = main if (is_winner_dealer or pid == self.dealer_id) else additional
+				if payment <= 0:
+					continue
+				self.players[pid].points -= payment
+				total_gain += payment
+				movements.append({'from': pid, 'to': winner_id, 'amount': payment})
+
+			if total_gain > 0:
+				self.players[winner_id].points += total_gain
+			return movements
+
+		total = int(cost.get('total', cost.get('main', 0)))
+		if total <= 0:
+			return []
+
+		target_loser = loser_id
+		if target_loser is None:
+			target_loser = self.current_discarder_id
+		if target_loser is None or target_loser < 0 or target_loser >= self.num_players or target_loser == winner_id:
+			return []
+
+		self.players[target_loser].points -= total
+		self.players[winner_id].points += total
+		movements.append({'from': target_loser, 'to': winner_id, 'amount': total})
+		return movements
 
 	def _build_call_options(self, discarder_id: int, discarded_tile: str) -> List[Dict[str, Any]]:
 		"""捨て牌に対する鳴き候補（プレイヤー別）を作成"""
@@ -423,11 +580,18 @@ class Game:
 				'current_turn': self.current_turn,
 				'phase': self.phase,
 			}
+		if declare_riichi and current_player.points < 1000:
+			return {
+				'error': 'Not enough points to declare riichi',
+				'current_turn': self.current_turn,
+				'phase': self.phase,
+			}
 
 		# リーチ宣言があれば状態を更新
 		if declare_riichi:
 			current_player.is_riichi = True
 			self.ippatsu_eligible[discarder_id] = True
+			self._apply_riichi_deposit(discarder_id)
 		elif current_player.is_riichi:
 			# リーチ後最初の自摸番を消化したら一発権は消える
 			self.ippatsu_eligible[discarder_id] = False
@@ -566,6 +730,7 @@ class Game:
 			winner_id = int(list(ron_calls.keys())[0])
 			winner = self.players[winner_id]
 			is_winner_riichi = bool(getattr(winner, 'is_riichi', False))
+			points_before = self._build_points_snapshot()
 			value = self.estimate_agari_value(
 				winner_id,
 				self.last_discarded,
@@ -573,15 +738,33 @@ class Game:
 				is_riichi=is_winner_riichi,
 				is_ippatsu=self.ippatsu_eligible[winner_id],
 			)
+			point_movements = self._apply_agari_point_transfer(
+				winner_id,
+				value,
+				is_tsumo=False,
+				loser_id=self.current_discarder_id,
+			)
+			kyotaku_movement = self._apply_kyotaku_to_winner(winner_id)
+			if kyotaku_movement is not None:
+				point_movements.append(kyotaku_movement)
+			winner_was_dealer = (winner_id == self.dealer_id)
 			self._apply_agari_round_progression(winner_id)
 			response_data = {
 				'ok': True, 'action': 'ron', 'agari': True,
 				'type': 'ron', 'player_id': winner_id, 'win_tile': self.last_discarded, 'value': value,
+				'point_movements': point_movements,
+				'points_before': points_before,
+				'points_after': self._build_points_snapshot(),
+				'kyotaku_riichi': self.kyotaku_riichi,
 			}
 			if is_winner_riichi and len(self.dead_wall) >= 6:
 				response_data['ura_dora_indicator'] = self.dead_wall[5]
-			self.start_game()
-			response_data['new_hand_started'] = True
+			if self._should_end_game_after_agari(winner_id, winner_was_dealer):
+				response_data['is_game_over'] = True
+				response_data['final_settlement'] = self._finalize_game()
+			else:
+				self.start_game()
+				response_data['new_hand_started'] = True
 		elif pon_kan_calls:
 			self.ippatsu_eligible = [False] * self.num_players
 			pid = int(list(pon_kan_calls.keys())[0])
@@ -637,6 +820,8 @@ class Game:
 			'current_turn': self.current_turn,
 			'is_game_over': self.is_game_over,
 			'wall_count': len(self.wall),
+			'kyotaku_riichi': self.kyotaku_riichi,
+			'final_settlement': self.final_settlement,
 			'players': [p.to_dict() for p in self.players],
 		}
 
@@ -648,6 +833,7 @@ class Game:
 			'phase': self.phase,
 			'dealer_id': self.dealer_id,
 			'honba': self.honba,
+			'kyotaku_riichi': self.kyotaku_riichi,
 			'kan_count': self.kan_count,
 			'seat_winds': self.get_seat_winds(),
 			'last_discarded': self.last_discarded,
@@ -660,9 +846,14 @@ class Game:
 			'ura_dora_indicator': getattr(self, 'ura_dora_indicator', None),
 			'dead_wall': self.dead_wall,
 			'round_wind': self.round_wind,
+			'dealer_experience': self.dealer_experience,
+			'end_game_config': self._get_end_game_config(),
+			'final_settlement': self.final_settlement,
+			'points': self._build_points_snapshot(),
 			'players': [
 				{
 					'player_id': p.player_id,
+					'points': p.points,
 					'hand': p.hand.to_list(),
 					'shanten': p.get_shanten(),
 					'discards': p.discards,
@@ -785,25 +976,47 @@ class Game:
 		is_agari = self.check_agari(player_id)
 		player = self.players[player_id]
 		actual_is_riichi = getattr(player, 'is_riichi', False) or is_riichi
+		points_before = self._build_points_snapshot()
+		value = self.estimate_agari_value(
+			player_id,
+			win_tile,
+			is_tsumo,
+			actual_is_riichi,
+			self.ippatsu_eligible[player_id],
+		) if is_agari else None
+		point_movements: List[Dict[str, int]] = []
+		if is_agari and value:
+			point_movements = self._apply_agari_point_transfer(
+				player_id,
+				value,
+				is_tsumo=is_tsumo,
+				loser_id=self.current_discarder_id,
+			)
+			kyotaku_movement = self._apply_kyotaku_to_winner(player_id)
+			if kyotaku_movement is not None:
+				point_movements.append(kyotaku_movement)
 		result = {
 			'agari': is_agari,
 			'player_id': player_id,
 			'win_tile': win_tile,
-			'value': self.estimate_agari_value(
-				player_id,
-				win_tile,
-				is_tsumo,
-				actual_is_riichi,
-				self.ippatsu_eligible[player_id],
-			) if is_agari else None,
+			'value': value,
+			'point_movements': point_movements,
+			'points_before': points_before,
+			'points_after': self._build_points_snapshot(),
+			'kyotaku_riichi': self.kyotaku_riichi,
 		}
 		ura_dora_indicator = None
 		if is_agari and actual_is_riichi:
 			ura_dora_indicator = self.dead_wall[5] if len(self.dead_wall) >= 6 else None
 		if is_agari:
+			winner_was_dealer = (player_id == self.dealer_id)
 			self._apply_agari_round_progression(player_id)
-			self.start_game()
-			result['new_hand_started'] = True
+			if self._should_end_game_after_agari(player_id, winner_was_dealer):
+				result['is_game_over'] = True
+				result['final_settlement'] = self._finalize_game()
+			else:
+				self.start_game()
+				result['new_hand_started'] = True
 		if ura_dora_indicator is not None:
 			result['ura_dora_indicator'] = ura_dora_indicator
 		return result

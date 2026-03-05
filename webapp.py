@@ -42,6 +42,7 @@ def get_game_from_session() -> Game:
 	game.round_wind = game_data.get('round_wind', EAST)
 	game.dealer_id = game_data.get('dealer_id', 0)
 	game.honba = game_data.get('honba', 0)
+	game.kyotaku_riichi = game_data.get('kyotaku_riichi', 0)
 	game.kan_count = game_data.get('kan_count', 0)
 	game.phase = game_data.get('phase', 'discard')
 	game.last_discarded = game_data.get('last_discarded')
@@ -52,6 +53,7 @@ def get_game_from_session() -> Game:
 	# プレイヤーの手牌を復元
 	players_data = game_data.get('players', [])
 	for i, p_data in enumerate(players_data):
+		game.players[i].points = p_data.get('points', game.players[i].points)
 		game.players[i].hand.tiles = p_data.get('hand', [])
 		game.players[i].discards = p_data.get('discards', [])
 		game.players[i].melds = p_data.get('melds', [])
@@ -64,6 +66,11 @@ def get_game_from_session() -> Game:
 	game.ippatsu_eligible = game_data.get('ippatsu_eligible', [False] * game.num_players)
 	game.riichi_locked_hands = game_data.get('riichi_locked_hands', [None] * game.num_players)
 	game.riichi_wait_tiles = game_data.get('riichi_wait_tiles', [[] for _ in range(game.num_players)])
+	game.dealer_experience = game_data.get('dealer_experience', [False] * game.num_players)
+	if not any(game.dealer_experience) and 0 <= game.dealer_id < game.num_players:
+		game.dealer_experience[game.dealer_id] = True
+	game.end_game_config = game_data.get('end_game_config', game._get_end_game_config())
+	game.final_settlement = game_data.get('final_settlement')
 
 	return game
 
@@ -93,6 +100,7 @@ def build_state_response(game: Game, result: dict | None = None) -> dict:
 		'round_wind_label': wind_to_label(game.round_wind),
 		'dealer_id': game.dealer_id,
 		'honba': game.honba,
+		'kyotaku_riichi': game.kyotaku_riichi,
 		'seat_winds': game.get_seat_winds(),
 		'seat_wind_labels': [wind_to_label(w) for w in game.get_seat_winds()],
 		'awaiting_call': result.get('awaiting_call', game.phase == 'call_wait'),
@@ -116,6 +124,9 @@ def build_state_response(game: Game, result: dict | None = None) -> dict:
 		'is_riichi': [p.is_riichi for p in game.players],
 		'ippatsu_eligible': game.ippatsu_eligible,
 		'furiten_list': [game.is_furiten(i) for i in range(game.num_players)],
+		'points': [p.points for p in game.players],
+		'final_settlement': game.final_settlement,
+		'end_game_config': game._get_end_game_config(),
 	}
 	if 'ok' in result:
 		response_data['ok'] = result['ok']
@@ -137,6 +148,16 @@ def build_state_response(game: Game, result: dict | None = None) -> dict:
 		response_data['ura_dora_indicator'] = result['ura_dora_indicator']
 	if 'new_hand_started' in result:
 		response_data['new_hand_started'] = result['new_hand_started']
+	if 'point_movements' in result:
+		response_data['point_movements'] = result['point_movements']
+	if 'points_before' in result:
+		response_data['points_before'] = result['points_before']
+	if 'points_after' in result:
+		response_data['points_after'] = result['points_after']
+	if 'final_settlement' in result:
+		response_data['final_settlement'] = result['final_settlement']
+	if 'kyotaku_riichi' in result:
+		response_data['kyotaku_riichi'] = result['kyotaku_riichi']
 	return response_data
 
 
@@ -218,6 +239,9 @@ def index():
 		seat_winds=game.get_seat_winds(),
 		seat_wind_labels=[wind_to_label(w) for w in game.get_seat_winds()],
 		remaining_draws=max(0, len(game.wall)),
+		points=[p.points for p in game.players],
+		kyotaku_riichi=game.kyotaku_riichi,
+		final_settlement=game.final_settlement,
 		can_riichi=can_riichi,
 		is_riichi=[p.is_riichi for p in game.players],
 		ippatsu_eligible=getattr(game, 'ippatsu_eligible', [False] * game.num_players),
