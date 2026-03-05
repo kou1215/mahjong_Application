@@ -21,6 +21,13 @@ class Player:
 		self.is_ai = is_ai
 		self.hand = Hand()
 		self.discards: List[str] = []
+		self.melds: List[List[str]] = []  # 鳴きのリスト（各鳴きは3つの牌のリスト）
+		self.is_riichi: bool = False  # リーチ状態
+
+	@property
+	def is_menzen(self) -> bool:
+		"""門前（副露なし）かどうか判定。"""
+		return len(self.melds) == 0
 
 	def add_tile(self, tile: str) -> None:
 		"""ツモ牌を追加"""
@@ -28,7 +35,7 @@ class Player:
 
 	def get_shanten(self) -> int:
 		"""シャンテン数を取得"""
-		return self.hand.get_shanten()
+		return self.hand.get_shanten(open_melds_count=len(self.melds))
 
 	def choose_discard(self) -> int:
 		"""
@@ -49,6 +56,98 @@ class Player:
 		self.discards.append(tile)
 		return tile
 
+	def call_pong(self, tiles: List[str]) -> bool:
+		"""
+		ポンを成立させる
+		
+		Args:
+			tiles: ポンを作る3つの牌
+		
+		Returns:
+			成功なら True
+		"""
+		if len(tiles) != 3 or not all(t == tiles[0] for t in tiles):
+			return False
+		
+		# 手牌から牌を削除
+		for tile in tiles[:2]:  # 捨てられた牌を除く2枚を削除
+			if tile in self.hand.tiles:
+				self.hand.remove_tile(self.hand.tiles.index(tile))
+			else:
+				return False
+		
+		# メルドに追加
+		self.melds.append(tiles)
+		self.hand.sort()
+		return True
+
+	def call_chow(self, tiles: List[str], discarded_tile: str = None) -> bool:
+		"""
+		チーを成立させる
+		
+		Args:
+			tiles: チーを作る3つの牌（連続）
+			discarded_tile: 他家の捨て牌（指定がない場合は従来互換動作）
+		
+		Returns:
+			成功なら True
+		"""
+		if len(tiles) != 3:
+			return False
+
+		tiles_to_remove = []
+		if discarded_tile is None:
+			# 後方互換: 先頭が捨て牌である前提
+			tiles_to_remove = tiles[1:]
+		else:
+			# 3枚の組から、捨て牌1枚分のみ除外して手牌から2枚削除する
+			tiles_to_remove = list(tiles)
+			if discarded_tile not in tiles_to_remove:
+				return False
+			tiles_to_remove.remove(discarded_tile)
+		
+		# 手牌から必要牌を削除
+		for tile in tiles_to_remove:
+			if tile in self.hand.tiles:
+				self.hand.remove_tile(self.hand.tiles.index(tile))
+			else:
+				return False
+		
+		# メルドに追加
+		self.melds.append(tiles)
+		self.hand.sort()
+		return True
+
+	def call_kan(self, tile: str, is_closed: bool = False) -> bool:
+		"""
+		カンを成立させる（簡易実装）
+
+		Args:
+			tile: カンに使う牌の文字列（例: '5p'）
+			is_closed: 暗槓かどうか（True=暗槓, False=明槓）
+
+		Returns:
+			成功なら True
+		"""
+		# 暗槓の場合は手牌に4枚必要、明槓（捨て牌を使う明槓）は手牌に3枚必要
+		required = 4 if is_closed else 3
+		if self.hand.to_list().count(tile) < required:
+			return False
+
+		# 手牌から必要枚数を削除（暗槓は4枚、明槓は3枚）
+		for _ in range(required):
+			# remove first occurrence
+			if tile in self.hand.tiles:
+				self.hand.remove_tile(self.hand.tiles.index(tile))
+			else:
+				# もし足りなければ失敗
+				return False
+
+		# メルドとして4枚のリストを追加（カンは4枚）
+		self.melds.append([tile, tile, tile, tile])
+		self.hand.sort()
+		return True
+
 	def to_dict(self) -> dict:
 		"""プレイヤー情報を辞書化"""
 		return {
@@ -56,6 +155,7 @@ class Player:
 			'hand': self.hand.to_list(),
 			'shanten': self.get_shanten(),
 			'discards': self.discards,
+			'melds': self.melds,
 			'is_ai': self.is_ai,
 		}
 

@@ -71,45 +71,57 @@
 <body>
   <div id="mahjong-stadium">
     <div id="game-info">
+      <div id="turn-indicator">手番: Player <span id="turn-player">{{ current_turn if hands_view else 0 }}</span></div>
+      <div id="phase-indicator">状態: <span id="phase-text">{{ phase if hands_view else 'discard' }}</span></div>
+      <div id="round-wind">場風: <span id="round-wind-text">{{ round_wind_label if round_wind_label is defined else '' }}</span></div>
+      <div id="honba">本場: <span id="honba-count">{{ honba if honba is defined else 0 }}</span></div>
       <div id="dora-indicator-area">
         ドラ表示牌:
-        {% if hands_view and dora_indicator %}
-          <img id="dora-indicator-img" class="tile dora-tile" src="/static/tiles/{{ dora_indicator }}.png" alt="{{ dora_indicator }}" style="width: 40px;" onerror="handleImageError(this, '{{ dora_indicator }}')">
-        {% else %}
-          <span id="dora-indicator-img"></span>
+        <span id="dora-indicators-wrap">
+        {% if hands_view and dora_indicators %}
+          {% for d in dora_indicators %}
+            <img class="tile dora-tile" src="/static/tiles/{{ d }}.png" alt="{{ d }}" style="width: 40px;" onerror="handleImageError(this, '{{ d }}')">
+          {% endfor %}
+        {% elif hands_view and dora_indicator %}
+          <img class="tile dora-tile" src="/static/tiles/{{ dora_indicator }}.png" alt="{{ dora_indicator }}" style="width: 40px;" onerror="handleImageError(this, '{{ dora_indicator }}')">
         {% endif %}
+        </span>
       </div>
       <div id="remaining-draws">残りツモ回数: <span id="remaining-draws-count">{{ remaining_draws if hands_view else '' }}</span></div>
       <form action="/reset" method="get" style="display:inline; margin-left:20px;">
         <button type="submit">新規対局（リセット）</button>
       </form>
+      <button type="button" onclick="applyDebugTenpai()" style="margin-left:8px;">デバッグ配牌</button>
     </div>
 
     <div id="opponents-row">
       {% if hands_view %}
         <div class="opponent-area" id="opponent-3">
           <div class="opponent-label">Player 3</div>
+          <div id="melds-display-area-3" style="margin-bottom:6px;"></div>
           <div class="tiles-row opponent-tiles" id="tiles-row-3">
             {% for t in hands_view[3].tiles %}
-              <img class="tile opponent-tile" data-player="3" data-index="{{ loop.index0 }}" src="{{ url_for('static', filename='tiles/ura.png') }}" alt="ura">
+              <img class="tile opponent-tile clickable" data-player="3" data-index="{{ loop.index0 }}" src="{{ url_for('static', filename='tiles/' + t + '.png') }}" alt="{{ t }}" onerror="handleImageError(this, '{{ t }}')">
             {% endfor %}
           </div>
           <div class="discards" id="discards-3"></div>
         </div>
         <div class="opponent-area" id="opponent-2">
           <div class="opponent-label">Player 2</div>
+          <div id="melds-display-area-2" style="margin-bottom:6px;"></div>
           <div class="tiles-row opponent-tiles" id="tiles-row-2">
             {% for t in hands_view[2].tiles %}
-              <img class="tile opponent-tile" data-player="2" data-index="{{ loop.index0 }}" src="{{ url_for('static', filename='tiles/ura.png') }}" alt="ura">
+              <img class="tile opponent-tile clickable" data-player="2" data-index="{{ loop.index0 }}" src="{{ url_for('static', filename='tiles/' + t + '.png') }}" alt="{{ t }}" onerror="handleImageError(this, '{{ t }}')">
             {% endfor %}
           </div>
           <div class="discards" id="discards-2"></div>
         </div>
         <div class="opponent-area" id="opponent-1">
           <div class="opponent-label">Player 1</div>
+          <div id="melds-display-area-1" style="margin-bottom:6px;"></div>
           <div class="tiles-row opponent-tiles" id="tiles-row-1">
             {% for t in hands_view[1].tiles %}
-              <img class="tile opponent-tile" data-player="1" data-index="{{ loop.index0 }}" src="{{ url_for('static', filename='tiles/ura.png') }}" alt="ura">
+              <img class="tile opponent-tile clickable" data-player="1" data-index="{{ loop.index0 }}" src="{{ url_for('static', filename='tiles/' + t + '.png') }}" alt="{{ t }}" onerror="handleImageError(this, '{{ t }}')">
             {% endfor %}
           </div>
           <div class="discards" id="discards-1"></div>
@@ -122,22 +134,41 @@
     </div>
 
     <div id="my-area">
+      {# Template block #}
       {% if hands_view %}
-        {% if hands_view[0] %}
-           <div class="my-label">あなた (Player 0)</div>
+          {% if hands_view[0] %}
+             <div class="my-label">あなた (Player 0)</div>
           <div class="discards" id="discards-0"></div>
+          <div id="melds-display-area" style="margin-bottom:12px;"></div>
+          <div id="agari-tiles-area" style="margin-bottom:10px;"></div>
           <div class="tiles-row my-tiles" id="tiles-row-0">
             {% for t in hands_view[0].tiles %}
               <img class="tile clickable" data-player="0" data-index="{{ loop.index0 }}" src="{{ url_for('static', filename='tiles/' + t + '.png') }}" alt="{{ t }}">
             {% endfor %}
           </div>
-          <button type="button" id="agari-btn" onclick="checkAgari()">🎯 アガり判定</button>
+          <button type="button" id="riichi-btn" style="display: {% if can_riichi %}inline-block{% else %}none{% endif %}; background-color: #9c27b0; color: white; margin-right: 10px; margin-top: 8px; margin-bottom: 8px;" onclick="toggleRiichi()">🔥 リーチ</button>
+          <div id="available-calls-area" style="margin-top:12px;"></div>
         {% endif %}
       {% endif %}
     </div>
   </div>
 
  <script>
+      // リーチボタンの状態管理
+      let riichiMode = false;
+
+      // リーチボタン押下時の挙動
+      function toggleRiichi() {
+        const riichiBtn = document.getElementById('riichi-btn');
+        riichiMode = !riichiMode;
+        if (riichiMode) {
+          riichiBtn.style.backgroundColor = '#ff9800';
+          riichiBtn.innerText = 'リーチ宣言中！';
+        } else {
+          riichiBtn.style.backgroundColor = '#9c27b0';
+          riichiBtn.innerText = '🔥 リーチ';
+        }
+      }
     function handleImageError(element, tileName) {
       if (element.src.endsWith('.png')) {
         element.onerror = null;
@@ -145,92 +176,409 @@
       }
     }
 
-    const discards = [[], [], [], []];
+    // Jinja2の出力を一度文字列として受け取り、JSオブジェクトとしてパース（波線対策）
+    const handsView = JSON.parse('{{ hands_view | tojson | safe if hands_view else "null" }}');
+    const agariTilesView = JSON.parse('{{ agari_tiles_view | tojson | safe if agari_tiles_view else "null" }}');
+    const pendingCalls = JSON.parse('{{ pending_calls | tojson | safe if pending_calls else "[]" }}');
+    const lastDiscarded = JSON.parse('{{ last_discarded | tojson | safe if last_discarded else "null" }}');
+    const initialIsRiichi = JSON.parse('{{ is_riichi | tojson | safe if is_riichi is defined else "[false, false, false, false]" }}');
+    const initialIppatsuEligible = JSON.parse('{{ ippatsu_eligible | tojson | safe if ippatsu_eligible is defined else "[false, false, false, false]" }}');
+    const initialFuritenList = JSON.parse('{{ furiten_list | tojson | safe if furiten_list is defined else "[false, false, false, false]" }}');
+    const initialCanRiichi = JSON.parse('{{ can_riichi | tojson | safe if can_riichi is defined else "false" }}');
+    const initialSeatWindLabels = JSON.parse('{{ seat_wind_labels | tojson | safe if seat_wind_labels is defined else "[\"東\", \"南\", \"西\", \"北\"]" }}');
+    const initialRoundWindLabel = JSON.parse('{{ round_wind_label | tojson | safe if round_wind_label is defined else "\"東\"" }}');
+    const initialHonba = parseInt('{{ honba if honba is defined else 0 }}');
+  
+  // 数値と文字列も引用符で囲むことでJSの文法エラーを防ぐ
+    let currentTurn = parseInt('{{ current_turn if current_turn is defined else 0 }}');
+    let gamePhase = '{{ phase if phase is defined else "discard" }}';
+
+    const discards = handsView ? handsView.map(h => h.discards) : [[], [], [], []];
+    const initialMelds = handsView ? handsView.map(h => h.melds) : [[], [], [], []];
+    const initialShantenList = handsView ? handsView.map(h => h.shanten) : [null, null, null, null];
+    const initialAgariTiles = agariTilesView || [[], [], [], []];
+    const initialPendingCalls = pendingCalls || [];
+    const initialLastDiscarded = lastDiscarded || null;
     let lastDrawnTile = null;
     window.player0_draw = null;
+    window.shantenValues = initialShantenList;
+    let is_riichi = initialIsRiichi;
+    let ippatsu_eligible = initialIppatsuEligible;
+    let furiten_list = initialFuritenList;
+    let can_riichi = initialCanRiichi;
+    let seatWindLabels = initialSeatWindLabels;
+    let roundWindLabel = initialRoundWindLabel;
+    let honbaCount = Number.isNaN(initialHonba) ? 0 : initialHonba;
+
+    function updatePlayerStatusBadges(isRiichiList, ippatsuList, furitenList) {
+      for (let p = 0; p < 4; p++) {
+        const labelElem = (p === 0)
+          ? document.querySelector('.my-label')
+          : document.querySelector('#opponent-' + p + ' .opponent-label');
+        if (!labelElem) continue;
+
+        const windLabel = (seatWindLabels && seatWindLabels[p]) ? seatWindLabels[p] : '';
+        const baseText = (p === 0) ? ('あなた (Player 0) [' + windLabel + ']') : ('Player ' + p + ' [' + windLabel + ']');
+        let html = baseText;
+        if (isRiichiList && isRiichiList[p]) {
+          html += ' <span class="status-badge riichi-badge">リーチ</span>';
+        }
+        if (ippatsuList && ippatsuList[p]) {
+          html += ' <span class="status-badge ippatsu-badge">一発有効中</span>';
+        }
+        if (furitenList && furitenList[p]) {
+          html += ' <span class="status-badge furiten-badge">フリテン</span>';
+        }
+        labelElem.innerHTML = html;
+      }
+    }
 
     function setTileClickHandlers() {
-      document.querySelectorAll('#tiles-row-0 .tile.clickable').forEach(img => {
+            // リーチボタンの表示・状態
+            const riichiBtn = document.getElementById('riichi-btn');
+            if (typeof can_riichi !== 'undefined' && riichiBtn) {
+              if (can_riichi) {
+                riichiBtn.style.display = '';
+              } else {
+                riichiBtn.style.display = 'none';
+                riichiMode = false;
+                riichiBtn.classList.remove('active');
+              }
+            }
+      // リーチ状態かつ自分のターンならクリック不可
+      const isPlayer0Riichi = (typeof is_riichi !== 'undefined') ? is_riichi[0] : false;
+      const isPlayer0Turn = (currentTurn === 0);
+
+      document.querySelectorAll('img[data-player][data-index]').forEach(img => {
+        const player = parseInt(img.getAttribute('data-player'));
+        // リーチ状態かつ自分のターンならクリック不可
+        const isActive = (gamePhase !== 'call_wait') && (player === currentTurn) && !(isPlayer0Riichi && isPlayer0Turn);
+        img.classList.toggle('clickable', isActive);
+        img.style.opacity = isActive ? '1' : '0.72';
+        img.title = isActive ? '打牌できます' : ('現在の手番は Player ' + currentTurn + ' です');
+
         img.onclick = function() {
+          if (!isActive) return;
+          if (gamePhase === 'call_wait') {
+            alert('鳴き判定中です。ポン/チー/スルーを選択してください。');
+            return;
+          }
+          const player = parseInt(this.getAttribute('data-player'));
           const idx = parseInt(this.getAttribute('data-index'));
-          discardTile(idx);
+          if (player !== currentTurn) {
+            alert('現在の手番は Player ' + currentTurn + ' です。');
+            return;
+          }
+          discardTile(player, idx, riichiMode);
         };
       });
     }
 
     function disableTileClickHandlers() {
-      document.querySelectorAll('#tiles-row-0 .tile.clickable').forEach(img => {
+      document.querySelectorAll('img[data-player][data-index]').forEach(img => {
         img.onclick = null;
         img.classList.remove('clickable');
+        img.style.opacity = '0.72';
       });
     }
 
-    // アガり形判定でボタン色を更新
-    function updateAgariButton() {
-      const button = document.getElementById('agari-btn'); // IDを正しく修正
-      if (!button) return;
-      
-      // Player 0 のシャンテン数を取得
-      const shanten = window.shantenValues ? window.shantenValues[0] : null;
-      
-      if (shanten === -1) {
-        // アガり形：ボタンを目立つ色（オレンジ系）に変更
-        button.style.background = '#FF6B35';
-        button.title = 'アガり形です！';
-      } else if (shanten === 0) {
-        // テンパイ：ボタンを注意色に
-        button.style.background = '#FFB703';
-        button.title = 'テンパイしています';
-      } else {
-        // 通常状態：緑
-        button.style.background = '#4CAF50';
-        button.title = '';
+    function syncDiscardsFromServer(data) {
+      if (!data || !data.discards || !Array.isArray(data.discards)) return;
+      for (let p = 0; p < discards.length; p++) {
+        discards[p] = Array.isArray(data.discards[p]) ? [...data.discards[p]] : [];
+        renderDiscards(p);
       }
     }
 
+    function renderDoraIndicators(doraIndicators) {
+      const wrap = document.getElementById('dora-indicators-wrap');
+      if (!wrap) return;
+      wrap.innerHTML = '';
+
+      const indicators = Array.isArray(doraIndicators) ? doraIndicators : [];
+      indicators.forEach(tile => {
+        const img = document.createElement('img');
+        img.className = 'tile dora-tile';
+        img.style.width = '40px';
+        img.src = '/static/tiles/' + tile + '.png';
+        img.alt = tile;
+        img.onerror = function() { handleImageError(this, tile); };
+        wrap.appendChild(img);
+      });
+    }
+
+    function canShowTsumoAction() {
+      return currentTurn === 0 && gamePhase === 'discard' && !!lastDrawnTile;
+    }
+
+    function renderSelfActions() {
+      const area = document.getElementById('available-calls-area');
+      if (!area) return;
+      area.innerHTML = '';
+
+      if (!canShowTsumoAction()) {
+        return;
+      }
+
+      const box = document.createElement('div');
+      box.style.margin = '6px 0';
+      box.style.padding = '6px';
+      box.style.background = 'rgba(255,255,255,0.05)';
+      box.style.borderRadius = '6px';
+
+      const label = document.createElement('strong');
+      label.innerText = 'Player 0:';
+      box.appendChild(label);
+
+      const tsumoBtn = document.createElement('button');
+      tsumoBtn.innerText = 'ツモ';
+      tsumoBtn.onclick = () => checkAgari();
+      box.appendChild(tsumoBtn);
+
+      area.appendChild(box);
+    }
+
+    function renderActionArea(availableCalls, discardedTile) {
+      if (availableCalls && availableCalls.length > 0) {
+        renderAvailableCalls(availableCalls, discardedTile);
+        return;
+      }
+      renderSelfActions();
+    }
+
     // 誤って消えていた discardTile 関数を復元・修正
-    async function discardTile(idx) {
+    async function discardTile(playerId, idx) {
       const formData = new FormData();
+      formData.append('player_id', playerId);
       formData.append('discard_index', idx);
+      if (riichiMode) formData.append('declare_riichi', 'true');
       const res = await fetch('/discard', { method: 'POST', body: formData });
       if (!res.ok) {
         alert('エラー: ' + (await res.text()));
         return;
       }
-      
       const data = await res.json();
-      window.player0_draw = data.player0_draw;
-      window.shantenValues = data.shanten_list;
-      lastDrawnTile = data.player0_draw;
-      
-      updateHands(data.hands, data.shanten_list);
-      updateDiscards(data, data.auto_log);
+      // デバッグ用: サーバーから返ってきたis_riichiリストを出力
+      console.log("--- Server Response: is_riichi List ---");
+      console.table(data.is_riichi);
 
-      // 手牌が更新されたらボタンの色も更新
-      updateAgariButton();
+      is_riichi = data.is_riichi || is_riichi;
+      ippatsu_eligible = data.ippatsu_eligible || ippatsu_eligible;
+      furiten_list = data.furiten_list || furiten_list;
+      can_riichi = (typeof data.can_riichi !== 'undefined') ? data.can_riichi : can_riichi;
+      seatWindLabels = data.seat_wind_labels || seatWindLabels;
+      roundWindLabel = (typeof data.round_wind_label !== 'undefined') ? data.round_wind_label : roundWindLabel;
+      honbaCount = (typeof data.honba !== 'undefined') ? data.honba : honbaCount;
+      updatePlayerStatusBadges(is_riichi, ippatsu_eligible, furiten_list);
 
-      const doraImgArea = document.getElementById('dora-indicator-area');
-      if (doraImgArea) {
-        let doraImg = document.getElementById('dora-indicator-img');
-        if (doraImg) {
-          if (data.dora_indicator) {
-            doraImg.src = '/static/tiles/' + data.dora_indicator + '.png';
-            doraImg.alt = data.dora_indicator;
-            doraImg.onerror = function() { handleImageError(this, data.dora_indicator); };
-          } else {
-            doraImg.src = ''; doraImg.alt = '';
+      // リーチボタンの表示制御
+      const riichiBtn = document.getElementById('riichi-btn');
+      if (riichiBtn && typeof data.can_riichi !== 'undefined') {
+        if (data.can_riichi) {
+          riichiBtn.style.display = 'inline-block';
+        } else {
+          riichiBtn.style.display = 'none';
+          if (typeof isDeclaringRiichi !== 'undefined') {
+            isDeclaringRiichi = false;
           }
-        } else if (data.dora_indicator) {
-          doraImg = document.createElement('img');
-          doraImg.id = 'dora-indicator-img';
-          doraImg.className = 'tile dora-tile';
-          doraImg.style.width = '40px';
-          doraImg.src = '/static/tiles/' + data.dora_indicator + '.png';
-          doraImg.alt = data.dora_indicator;
-          doraImg.onerror = function() { handleImageError(this, data.dora_indicator); };
-          doraImgArea.appendChild(doraImg);
+          riichiBtn.style.backgroundColor = '#9c27b0';
+          riichiBtn.innerText = '🔥 リーチ';
         }
       }
+
+      currentTurn = data.current_turn;
+      gamePhase = data.phase;
+      window.player0_draw = data.next_draw;
+      window.shantenValues = data.shanten_list;
+      lastDrawnTile = data.next_draw;
+
+      updateHands(data.hands, data.shanten_list);
+      syncDiscardsFromServer(data);
+      displayAllMelds(data.melds || [[], [], [], []]);
+      renderAgariTiles((data.agari_tiles && data.agari_tiles[0]) ? data.agari_tiles[0] : []);
+      renderDoraIndicators(data.dora_indicators || (data.dora_indicator ? [data.dora_indicator] : []));
+      refreshTurnInfo();
+      renderActionArea(data.available_calls, data.discarded_tile);
+
+      renderDoraIndicators(data.dora_indicators || (data.dora_indicator ? [data.dora_indicator] : []));
+
+      if (typeof data.remaining_draws !== 'undefined') {
+        const drawsElem = document.getElementById('remaining_draws-count');
+        if (drawsElem) drawsElem.textContent = data.remaining_draws;
+      }
+
+      if (data.is_game_over) {
+        document.getElementById('gameover-message').style.display = 'block';
+        disableTileClickHandlers();
+      } else {
+        document.getElementById('gameover-message').style.display = 'none';
+        setTileClickHandlers();
+      }
+    }
+
+    async function applyDebugTenpai() {
+      const res = await fetch('/debug_tenpai', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' }
+      });
+      if (!res.ok) {
+        alert('デバッグ配牌エラー: ' + (await res.text()));
+        return;
+      }
+
+      const data = await res.json();
+      is_riichi = data.is_riichi || is_riichi;
+      ippatsu_eligible = data.ippatsu_eligible || ippatsu_eligible;
+      furiten_list = data.furiten_list || furiten_list;
+      can_riichi = (typeof data.can_riichi !== 'undefined') ? data.can_riichi : can_riichi;
+      seatWindLabels = data.seat_wind_labels || seatWindLabels;
+      roundWindLabel = (typeof data.round_wind_label !== 'undefined') ? data.round_wind_label : roundWindLabel;
+      honbaCount = (typeof data.honba !== 'undefined') ? data.honba : honbaCount;
+
+      currentTurn = data.current_turn;
+      gamePhase = data.phase;
+      window.player0_draw = data.next_draw;
+      window.shantenValues = data.shanten_list;
+      lastDrawnTile = data.next_draw;
+
+      updateHands(data.hands, data.shanten_list);
+      syncDiscardsFromServer(data);
+      displayAllMelds(data.melds || [[], [], [], []]);
+      renderAgariTiles((data.agari_tiles && data.agari_tiles[0]) ? data.agari_tiles[0] : []);
+      refreshTurnInfo();
+      renderActionArea(data.available_calls, data.discarded_tile);
+      updatePlayerStatusBadges(is_riichi, ippatsu_eligible, furiten_list);
+
+      renderDoraIndicators(data.dora_indicators || (data.dora_indicator ? [data.dora_indicator] : []));
+
+      if (typeof data.remaining_draws !== 'undefined') {
+        const drawsElem = document.getElementById('remaining-draws-count');
+        if (drawsElem) drawsElem.textContent = data.remaining_draws;
+      }
+
+      document.getElementById('gameover-message').style.display = 'none';
+      setTileClickHandlers();
+      alert('デバッグ配牌を適用しました（Player 0 聴牌）。');
+    }
+
+    function refreshTurnInfo() {
+      const turnElem = document.getElementById('turn-player');
+      const phaseElem = document.getElementById('phase-text');
+      const roundWindElem = document.getElementById('round-wind-text');
+      const honbaElem = document.getElementById('honba-count');
+      if (turnElem) turnElem.textContent = currentTurn;
+      if (phaseElem) phaseElem.textContent = gamePhase;
+      if (roundWindElem) roundWindElem.textContent = roundWindLabel;
+      if (honbaElem) honbaElem.textContent = honbaCount;
+    }
+
+    function renderAvailableCalls(availableCalls, discardedTile) {
+      const area = document.getElementById('available-calls-area');
+      area.innerHTML = '';
+      const title = document.createElement('div');
+      title.innerText = '鳴き可能: 最近の捨て牌 ' + (discardedTile || '');
+      area.appendChild(title);
+
+      availableCalls.forEach(entry => {
+        const pid = entry.player_id;
+        const calls = entry.calls;
+        const box = document.createElement('div');
+        box.style.margin = '6px 0';
+        box.style.padding = '6px';
+        box.style.background = 'rgba(255,255,255,0.05)';
+        box.style.borderRadius = '6px';
+        const label = document.createElement('strong');
+        label.innerText = 'Player ' + pid + ':';
+        box.appendChild(label);
+
+        // Pong
+        if (calls.can_pong) {
+          const b = document.createElement('button');
+          b.innerText = 'ポン';
+          b.onclick = () => applyCall(pid, 'pong', [discardedTile]);
+          box.appendChild(b);
+        }
+
+        // Chow: show combos if available
+        if (calls.can_chow && entry.chow_combos && entry.chow_combos.length > 0) {
+          entry.chow_combos.forEach(combo => {
+            const cb = document.createElement('button');
+            cb.innerText = 'チー ' + combo.join(' ');
+            cb.onclick = () => applyCall(pid, 'chow', combo);
+            box.appendChild(cb);
+          });
+        }
+
+        // Kan
+        if (calls.can_kan) {
+          const kb = document.createElement('button');
+          kb.innerText = 'カン';
+          kb.onclick = () => applyCall(pid, 'kan', [discardedTile]);
+          box.appendChild(kb);
+        }
+
+        // Ron
+        if (calls.can_ron) {
+          const rb = document.createElement('button');
+          rb.innerText = 'ロン';
+          rb.onclick = () => applyCall(pid, 'ron', [discardedTile]);
+          box.appendChild(rb);
+        }
+
+        // Pass
+        const pb = document.createElement('button');
+        pb.innerText = 'スルー';
+        pb.onclick = () => applyCall(pid, 'pass', []);
+        box.appendChild(pb);
+
+        area.appendChild(box);
+      });
+    }
+
+    async function applyCall(player_id, action, tiles) {
+      const res = await fetch('/apply_call', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ player_id: player_id, action: action, tiles: tiles })
+      });
+      if (!res.ok) {
+        alert('鳴き実行エラー: ' + (await res.text()));
+        return;
+      }
+      const data = await res.json();
+
+      is_riichi = data.is_riichi || is_riichi;
+      ippatsu_eligible = data.ippatsu_eligible || ippatsu_eligible;
+      furiten_list = data.furiten_list || furiten_list;
+      can_riichi = (typeof data.can_riichi !== 'undefined') ? data.can_riichi : can_riichi;
+      seatWindLabels = data.seat_wind_labels || seatWindLabels;
+      roundWindLabel = (typeof data.round_wind_label !== 'undefined') ? data.round_wind_label : roundWindLabel;
+      honbaCount = (typeof data.honba !== 'undefined') ? data.honba : honbaCount;
+      updatePlayerStatusBadges(is_riichi, ippatsu_eligible, furiten_list);
+
+      if (data.agari || data.action === 'ron') {
+        showAgariResult({
+          agari: !!data.agari,
+          value: data.value,
+          player_id: data.player_id,
+          win_tile: data.win_tile,
+          is_tsumo: false,
+          ura_dora_indicator: data.ura_dora_indicator,
+        });
+      }
+
+      currentTurn = data.current_turn;
+      gamePhase = data.phase;
+      window.shantenValues = data.shanten_list;
+      window.player0_draw = data.next_draw;
+      lastDrawnTile = data.next_draw;
+      updateHands(data.hands, data.shanten_list);
+      syncDiscardsFromServer(data);
+      displayAllMelds(data.melds || [[], [], [], []]);
+      renderAgariTiles((data.agari_tiles && data.agari_tiles[0]) ? data.agari_tiles[0] : []);
+      refreshTurnInfo();
+
+      renderActionArea(data.available_calls, data.discarded_tile);
 
       if (typeof data.remaining_draws !== 'undefined') {
         const drawsElem = document.getElementById('remaining-draws-count');
@@ -241,8 +589,89 @@
         document.getElementById('gameover-message').style.display = 'block';
         disableTileClickHandlers();
       } else {
+        document.getElementById('gameover-message').style.display = 'none';
         setTileClickHandlers();
       }
+    }
+    
+    function renderMeldsForPlayer(playerId, melds) {
+      const area = document.getElementById(playerId === 0 ? 'melds-display-area' : ('melds-display-area-' + playerId));
+      if (!area) return;
+      area.innerHTML = '';
+
+      if (!melds || melds.length === 0) return;
+      
+      const title = document.createElement('div');
+      title.innerText = '副露:';
+      title.style.fontWeight = 'bold';
+      title.style.marginBottom = '6px';
+      title.style.fontSize = playerId === 0 ? '1em' : '0.85em';
+      area.appendChild(title);
+      
+      melds.forEach(meld => {
+        const box = document.createElement('div');
+        box.style.display = 'flex';
+        box.style.gap = '4px';
+        box.style.marginBottom = '4px';
+        
+        meld.forEach(tile => {
+          const img = document.createElement('img');
+          img.className = 'tile';
+          if (playerId === 0) {
+            img.style.width = '40px';
+            img.style.height = '50px';
+          } else {
+            img.style.width = '24px';
+            img.style.height = '34px';
+          }
+          img.src = '/static/tiles/' + tile + '.png';
+          img.alt = tile;
+          img.onerror = function() { handleImageError(this, tile); };
+          box.appendChild(img);
+        });
+        
+        area.appendChild(box);
+      });
+    }
+
+    function displayAllMelds(allMelds) {
+      for (let p = 0; p < 4; p++) {
+        renderMeldsForPlayer(p, (allMelds && allMelds[p]) ? allMelds[p] : []);
+      }
+    }
+
+    function renderAgariTiles(agariTiles) {
+      const area = document.getElementById('agari-tiles-area');
+      if (!area) return;
+      area.innerHTML = '';
+
+      if (!agariTiles || agariTiles.length === 0) {
+        return;
+      }
+
+      const title = document.createElement('div');
+      title.innerText = '待ち牌:';
+      title.style.fontWeight = 'bold';
+      title.style.marginBottom = '4px';
+      area.appendChild(title);
+
+      const row = document.createElement('div');
+      row.style.display = 'flex';
+      row.style.gap = '4px';
+      row.style.justifyContent = 'center';
+
+      agariTiles.forEach(tile => {
+        const img = document.createElement('img');
+        img.className = 'tile';
+        img.style.width = '30px';
+        img.style.height = '42px';
+        img.src = '/static/tiles/' + tile + '.png';
+        img.alt = tile;
+        img.onerror = function() { handleImageError(this, tile); };
+        row.appendChild(img);
+      });
+
+      area.appendChild(row);
     }
 
     async function checkAgari() {
@@ -250,16 +679,57 @@
         alert('引いた牌がありません');
         return;
       }
+      // 🔴 ここを追加：今、画面上で自分（Player 0）がリーチしているかを確認する
+      const isActuallyRiichi = (is_riichi && is_riichi[0]) ? true : false;
+
       const res = await fetch('/check_agari', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ player_id: 0, win_tile: lastDrawnTile, is_tsumo: true })
+        body: JSON.stringify({ 
+          player_id: 0, 
+          win_tile: lastDrawnTile, 
+          is_tsumo: true,
+          is_riichi: isActuallyRiichi // 🔴 ここを追加：リーチ情報をサーバーに送る
+        })
       });
       if (!res.ok) {
         alert('エラー: ' + (await res.text()));
         return;
       }
       const data = await res.json();
+      seatWindLabels = data.seat_wind_labels || seatWindLabels;
+      roundWindLabel = (typeof data.round_wind_label !== 'undefined') ? data.round_wind_label : roundWindLabel;
+      honbaCount = (typeof data.honba !== 'undefined') ? data.honba : honbaCount;
+      is_riichi = data.is_riichi || is_riichi;
+      ippatsu_eligible = data.ippatsu_eligible || ippatsu_eligible;
+      furiten_list = data.furiten_list || furiten_list;
+      can_riichi = (typeof data.can_riichi !== 'undefined') ? data.can_riichi : can_riichi;
+
+      currentTurn = data.current_turn;
+      gamePhase = data.phase;
+      window.shantenValues = data.shanten_list;
+      window.player0_draw = data.next_draw;
+      lastDrawnTile = data.next_draw;
+
+      updateHands(data.hands, data.shanten_list);
+      syncDiscardsFromServer(data);
+      displayAllMelds(data.melds || [[], [], [], []]);
+      renderAgariTiles((data.agari_tiles && data.agari_tiles[0]) ? data.agari_tiles[0] : []);
+      renderDoraIndicators(data.dora_indicators || (data.dora_indicator ? [data.dora_indicator] : []));
+
+      renderActionArea(data.available_calls, data.discarded_tile);
+
+      refreshTurnInfo();
+      updatePlayerStatusBadges(is_riichi, ippatsu_eligible, furiten_list);
+
+      if (data.is_game_over) {
+        document.getElementById('gameover-message').style.display = 'block';
+        disableTileClickHandlers();
+      } else {
+        document.getElementById('gameover-message').style.display = 'none';
+        setTileClickHandlers();
+      }
+
       showAgariResult(data);
     }
 
@@ -270,11 +740,12 @@
         alert('アガリが成立していません: ' + (value ? value.error : 'Unknown error'));
         return;
       }
-      const message = `★ アガり成功！\n\n翻数: ${value.han}翻\n符数: ${value.fu}符\n点数: ${value.cost.main}点（全員から合計 ${value.cost.total}点）\n限度: ${value.limit}\n役: ${value.yaku.join(', ')}`;
+      let message = `★ アガり成功！\n\n翻数: ${value.han}翻\n符数: ${value.fu}符\n点数: ${value.cost.main}点（全員から合計 ${value.cost.total}点）\n限度: ${value.limit}\n役: ${value.yaku.join(', ')}`;
+      message += `\n裏ドラ表示牌: ${data.ura_dora_indicator ? data.ura_dora_indicator : 'なし'}`;
       alert(message);
     }
 
-    function updateHands(hands, shantenList) {
+function updateHands(hands, shantenList) {
       console.log('updateHands called with:', hands.length, 'players');
       for (let p = 0; p < hands.length; ++p) {
         const row = document.getElementById('tiles-row-' + p);
@@ -287,17 +758,16 @@
         if (p === 0) {
           const hand = hands[0];
           const drawTile = window.player0_draw;
-          console.log('Player 0: drawTile =', drawTile, ', hand =', hand);
           
           if (hand.length === 14 && drawTile) {
-            const drawIdx = hand.lastIndexOf(drawTile); // 重複牌がある場合を考慮し最後をツモ牌とする
+            const drawIdx = hand.lastIndexOf(drawTile); 
             let normalTiles = [];
             let tsumoTileNode = null;
             hand.forEach((t, i) => {
               const img = document.createElement('img');
               img.className = 'tile clickable';
               img.setAttribute('data-player', 0);
-              img.setAttribute('data-index', i); // 元の正確なインデックスを絶対に保持する
+              img.setAttribute('data-index', i);
               img.src = '/static/tiles/' + t + '.png';
               img.alt = t;
               img.onerror = function() { handleImageError(this, t); };
@@ -308,9 +778,7 @@
                 normalTiles.push(img);
               }
             });
-            // 13枚を先にアペンド
             normalTiles.forEach(node => row.appendChild(node));
-            // ツモ牌を最後にアペンド
             if (tsumoTileNode) row.appendChild(tsumoTileNode);
           } else {
             hand.forEach((t, i) => {
@@ -323,17 +791,18 @@
               img.onerror = function() { handleImageError(this, t); };
               row.appendChild(img);
             });
-            console.log('Player 0: rendered 14-tile layout');
           }
         } else {
           const hand = hands[p];
           for (let i = 0; i < hand.length; ++i) {
+            const t = hand[i];
             const img = document.createElement('img');
             img.className = 'tile opponent-tile';
             img.setAttribute('data-player', p);
             img.setAttribute('data-index', i);
-            img.src = '/static/tiles/ura.png';
-            img.alt = 'ura';
+            img.src = '/static/tiles/' + t + '.png';
+            img.alt = t;
+            img.onerror = function() { handleImageError(this, t); };
             row.appendChild(img);
           }
         }
@@ -342,21 +811,8 @@
         if (shantenSpan) {
           shantenSpan.innerText = (shantenList && shantenList[p] !== undefined) ? shantenList[p] : '?';
         }
-      }
-    }
-
-    function updateDiscards(data, auto_log) {
-      if (data.discarded_tile !== undefined) {
-        discards[0].push(data.discarded_tile);
-        renderDiscards(0);
-      }
-      if (auto_log) {
-        auto_log.forEach(log => {
-          discards[log.player].push(log.discarded);
-          renderDiscards(log.player);
-        });
-      }
-    }
+      } // ← forループの終わり
+    }   
 
     function renderDiscards(player) {
       let div = document.getElementById('discards-' + player);
@@ -372,9 +828,19 @@
     }
 
     // 初期化
-    if (document.querySelectorAll('#tiles-row-0 .tile.clickable').length > 0) {
+    if (document.querySelectorAll('img[data-player][data-index]').length > 0) {
       setTileClickHandlers();
-      updateAgariButton(); // 初期化時にもボタンの色を判定させる
+    }
+    updatePlayerStatusBadges(is_riichi, ippatsu_eligible, furiten_list);
+
+    refreshTurnInfo();
+    displayAllMelds(initialMelds);
+    renderAgariTiles((initialAgariTiles && initialAgariTiles[0]) ? initialAgariTiles[0] : []);
+    renderActionArea(initialPendingCalls, initialLastDiscarded);
+
+    // 初期捨て牌を表示
+    for (let p = 0; p < discards.length; ++p) {
+      renderDiscards(p);
     }
   </script>
 </body>
