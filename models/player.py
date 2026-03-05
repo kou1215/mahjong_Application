@@ -21,14 +21,27 @@ class Player:
 		self.is_ai = is_ai
 		self.hand = Hand()
 		self.discards: List[str] = []
-		self.melds: List[List[str]] = []  # 鳴きのリスト（各鳴きは3つの牌のリスト）
+		# 鳴きのリスト（各鳴きは dict: {type, tiles}）
+		# type: 'pon', 'chow', 'minkan', 'ankan'
+		self.melds: List[dict] = []
 		self.is_riichi: bool = False  # リーチ状態
 		self.points: int = 25000  # 持ち点
 
 	@property
 	def is_menzen(self) -> bool:
-		"""門前（副露なし）かどうか判定。"""
-		return len(self.melds) == 0
+		"""門前（副露なし、暗槓のみ可）かどうか判定。"""
+		# 暗槓以外の副露がなければ門前
+		for meld in self.melds:
+			# meld が辞書型で保存されている場合（理想的）
+			if isinstance(meld, dict):
+				if meld.get("type") != "ankan":
+					return False
+			# meld がリスト型に変換されてしまっている場合（セッション復元後など）
+			# 暗槓は必ず同じ牌が4枚のリストになることを利用して判別する
+			elif isinstance(meld, list):
+				if len(meld) != 4 or not all(t == meld[0] for t in meld):
+					return False
+		return True
 
 	def add_tile(self, tile: str) -> None:
 		"""ツモ牌を追加"""
@@ -60,36 +73,30 @@ class Player:
 	def call_pong(self, tiles: List[str]) -> bool:
 		"""
 		ポンを成立させる
-		
 		Args:
 			tiles: ポンを作る3つの牌
-		
 		Returns:
 			成功なら True
 		"""
 		if len(tiles) != 3 or not all(t == tiles[0] for t in tiles):
 			return False
-		
 		# 手牌から牌を削除
 		for tile in tiles[:2]:  # 捨てられた牌を除く2枚を削除
 			if tile in self.hand.tiles:
 				self.hand.remove_tile(self.hand.tiles.index(tile))
 			else:
 				return False
-		
 		# メルドに追加
-		self.melds.append(tiles)
+		self.melds.append({"type": "pon", "tiles": tiles})
 		self.hand.sort()
 		return True
 
 	def call_chow(self, tiles: List[str], discarded_tile: str = None) -> bool:
 		"""
 		チーを成立させる
-		
 		Args:
 			tiles: チーを作る3つの牌（連続）
 			discarded_tile: 他家の捨て牌（指定がない場合は従来互換動作）
-		
 		Returns:
 			成功なら True
 		"""
@@ -98,54 +105,42 @@ class Player:
 
 		tiles_to_remove = []
 		if discarded_tile is None:
-			# 後方互換: 先頭が捨て牌である前提
 			tiles_to_remove = tiles[1:]
 		else:
-			# 3枚の組から、捨て牌1枚分のみ除外して手牌から2枚削除する
 			tiles_to_remove = list(tiles)
 			if discarded_tile not in tiles_to_remove:
 				return False
 			tiles_to_remove.remove(discarded_tile)
-		
-		# 手牌から必要牌を削除
+
 		for tile in tiles_to_remove:
 			if tile in self.hand.tiles:
 				self.hand.remove_tile(self.hand.tiles.index(tile))
 			else:
 				return False
-		
-		# メルドに追加
-		self.melds.append(tiles)
+
+		self.melds.append({"type": "chow", "tiles": tiles})
 		self.hand.sort()
 		return True
 
 	def call_kan(self, tile: str, is_closed: bool = False) -> bool:
 		"""
 		カンを成立させる（簡易実装）
-
 		Args:
 			tile: カンに使う牌の文字列（例: '5p'）
 			is_closed: 暗槓かどうか（True=暗槓, False=明槓）
-
 		Returns:
 			成功なら True
 		"""
-		# 暗槓の場合は手牌に4枚必要、明槓（捨て牌を使う明槓）は手牌に3枚必要
 		required = 4 if is_closed else 3
 		if self.hand.to_list().count(tile) < required:
 			return False
-
-		# 手牌から必要枚数を削除（暗槓は4枚、明槓は3枚）
 		for _ in range(required):
-			# remove first occurrence
 			if tile in self.hand.tiles:
 				self.hand.remove_tile(self.hand.tiles.index(tile))
 			else:
-				# もし足りなければ失敗
 				return False
-
-		# メルドとして4枚のリストを追加（カンは4枚）
-		self.melds.append([tile, tile, tile, tile])
+		meld_type = "ankan" if is_closed else "minkan"
+		self.melds.append({"type": meld_type, "tiles": [tile]*4})
 		self.hand.sort()
 		return True
 
