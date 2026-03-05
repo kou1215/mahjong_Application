@@ -75,6 +75,7 @@
       <div id="phase-indicator">状態: <span id="phase-text">{{ phase if hands_view else 'discard' }}</span></div>
       <div id="round-wind">場風: <span id="round-wind-text">{{ round_wind_label if round_wind_label is defined else '' }}</span></div>
       <div id="honba">本場: <span id="honba-count">{{ honba if honba is defined else 0 }}</span></div>
+      <div id="kyotaku">供託: <span id="kyotaku-count">{{ kyotaku_riichi if kyotaku_riichi is defined else 0 }}</span>本</div>
       <div id="dora-indicator-area">
         ドラ表示牌:
         <span id="dora-indicators-wrap">
@@ -187,6 +188,8 @@
     const initialCanRiichi = JSON.parse('{{ can_riichi | tojson | safe if can_riichi is defined else "false" }}');
     const initialSeatWindLabels = JSON.parse('{{ seat_wind_labels | tojson | safe if seat_wind_labels is defined else "[\"東\", \"南\", \"西\", \"北\"]" }}');
     const initialRoundWindLabel = JSON.parse('{{ round_wind_label | tojson | safe if round_wind_label is defined else "\"東\"" }}');
+    const initialPoints = JSON.parse('{{ points | tojson | safe if points is defined else "[25000, 25000, 25000, 25000]" }}');
+    const initialKyotakuRiichi = parseInt('{{ kyotaku_riichi if kyotaku_riichi is defined else 0 }}');
     const initialHonba = parseInt('{{ honba if honba is defined else 0 }}');
   
   // 数値と文字列も引用符で囲むことでJSの文法エラーを防ぐ
@@ -208,7 +211,14 @@
     let can_riichi = initialCanRiichi;
     let seatWindLabels = initialSeatWindLabels;
     let roundWindLabel = initialRoundWindLabel;
+    let playerPoints = initialPoints;
+    let kyotakuRiichi = Number.isNaN(initialKyotakuRiichi) ? 0 : initialKyotakuRiichi;
     let honbaCount = Number.isNaN(initialHonba) ? 0 : initialHonba;
+
+    function setPointsFromData(data) {
+      if (!data || !Array.isArray(data.points)) return;
+      playerPoints = data.points;
+    }
 
     function updatePlayerStatusBadges(isRiichiList, ippatsuList, furitenList) {
       for (let p = 0; p < 4; p++) {
@@ -218,7 +228,10 @@
         if (!labelElem) continue;
 
         const windLabel = (seatWindLabels && seatWindLabels[p]) ? seatWindLabels[p] : '';
-        const baseText = (p === 0) ? ('あなた (Player 0) [' + windLabel + ']') : ('Player ' + p + ' [' + windLabel + ']');
+        const points = (playerPoints && typeof playerPoints[p] !== 'undefined') ? playerPoints[p] : 0;
+        const baseText = (p === 0)
+          ? ('あなた (Player 0) [' + windLabel + '] ' + points + '点')
+          : ('Player ' + p + ' [' + windLabel + '] ' + points + '点');
         let html = baseText;
         if (isRiichiList && isRiichiList[p]) {
           html += ' <span class="status-badge riichi-badge">リーチ</span>';
@@ -365,10 +378,12 @@
       is_riichi = data.is_riichi || is_riichi;
       ippatsu_eligible = data.ippatsu_eligible || ippatsu_eligible;
       furiten_list = data.furiten_list || furiten_list;
+      setPointsFromData(data);
       can_riichi = (typeof data.can_riichi !== 'undefined') ? data.can_riichi : can_riichi;
       seatWindLabels = data.seat_wind_labels || seatWindLabels;
       roundWindLabel = (typeof data.round_wind_label !== 'undefined') ? data.round_wind_label : roundWindLabel;
       honbaCount = (typeof data.honba !== 'undefined') ? data.honba : honbaCount;
+      kyotakuRiichi = (typeof data.kyotaku_riichi !== 'undefined') ? data.kyotaku_riichi : kyotakuRiichi;
       updatePlayerStatusBadges(is_riichi, ippatsu_eligible, furiten_list);
 
       // リーチボタンの表示制御
@@ -430,10 +445,12 @@
       is_riichi = data.is_riichi || is_riichi;
       ippatsu_eligible = data.ippatsu_eligible || ippatsu_eligible;
       furiten_list = data.furiten_list || furiten_list;
+      setPointsFromData(data);
       can_riichi = (typeof data.can_riichi !== 'undefined') ? data.can_riichi : can_riichi;
       seatWindLabels = data.seat_wind_labels || seatWindLabels;
       roundWindLabel = (typeof data.round_wind_label !== 'undefined') ? data.round_wind_label : roundWindLabel;
       honbaCount = (typeof data.honba !== 'undefined') ? data.honba : honbaCount;
+      kyotakuRiichi = (typeof data.kyotaku_riichi !== 'undefined') ? data.kyotaku_riichi : kyotakuRiichi;
 
       currentTurn = data.current_turn;
       gamePhase = data.phase;
@@ -466,10 +483,12 @@
       const phaseElem = document.getElementById('phase-text');
       const roundWindElem = document.getElementById('round-wind-text');
       const honbaElem = document.getElementById('honba-count');
+      const kyotakuElem = document.getElementById('kyotaku-count');
       if (turnElem) turnElem.textContent = currentTurn;
       if (phaseElem) phaseElem.textContent = gamePhase;
       if (roundWindElem) roundWindElem.textContent = roundWindLabel;
       if (honbaElem) honbaElem.textContent = honbaCount;
+      if (kyotakuElem) kyotakuElem.textContent = kyotakuRiichi;
     }
 
     function renderAvailableCalls(availableCalls, discardedTile) {
@@ -550,10 +569,12 @@
       is_riichi = data.is_riichi || is_riichi;
       ippatsu_eligible = data.ippatsu_eligible || ippatsu_eligible;
       furiten_list = data.furiten_list || furiten_list;
+      setPointsFromData(data);
       can_riichi = (typeof data.can_riichi !== 'undefined') ? data.can_riichi : can_riichi;
       seatWindLabels = data.seat_wind_labels || seatWindLabels;
       roundWindLabel = (typeof data.round_wind_label !== 'undefined') ? data.round_wind_label : roundWindLabel;
       honbaCount = (typeof data.honba !== 'undefined') ? data.honba : honbaCount;
+      kyotakuRiichi = (typeof data.kyotaku_riichi !== 'undefined') ? data.kyotaku_riichi : kyotakuRiichi;
       updatePlayerStatusBadges(is_riichi, ippatsu_eligible, furiten_list);
 
       if (data.agari || data.action === 'ron') {
@@ -564,6 +585,9 @@
           win_tile: data.win_tile,
           is_tsumo: false,
           ura_dora_indicator: data.ura_dora_indicator,
+          point_movements: data.point_movements,
+          points_after: data.points_after,
+          final_settlement: data.final_settlement,
         });
       }
 
@@ -700,9 +724,11 @@
       seatWindLabels = data.seat_wind_labels || seatWindLabels;
       roundWindLabel = (typeof data.round_wind_label !== 'undefined') ? data.round_wind_label : roundWindLabel;
       honbaCount = (typeof data.honba !== 'undefined') ? data.honba : honbaCount;
+      kyotakuRiichi = (typeof data.kyotaku_riichi !== 'undefined') ? data.kyotaku_riichi : kyotakuRiichi;
       is_riichi = data.is_riichi || is_riichi;
       ippatsu_eligible = data.ippatsu_eligible || ippatsu_eligible;
       furiten_list = data.furiten_list || furiten_list;
+      setPointsFromData(data);
       can_riichi = (typeof data.can_riichi !== 'undefined') ? data.can_riichi : can_riichi;
 
       currentTurn = data.current_turn;
@@ -742,6 +768,19 @@
       }
       let message = `★ アガり成功！\n\n翻数: ${value.han}翻\n符数: ${value.fu}符\n点数: ${value.cost.main}点（全員から合計 ${value.cost.total}点）\n限度: ${value.limit}\n役: ${value.yaku.join(', ')}`;
       message += `\n裏ドラ表示牌: ${data.ura_dora_indicator ? data.ura_dora_indicator : 'なし'}`;
+      if (Array.isArray(data.point_movements) && data.point_movements.length > 0) {
+        const movementLines = data.point_movements.map(m => `Player ${m.from} -> Player ${m.to}: ${m.amount}点`);
+        message += `\n\n点数移動:\n${movementLines.join('\n')}`;
+      }
+      if (Array.isArray(data.points_after)) {
+        message += `\n\n持ち点: ${data.points_after.map((pt, i) => `P${i}=${pt}`).join(' / ')}`;
+      }
+      if (data.final_settlement && Array.isArray(data.final_settlement.ranking)) {
+        const rankingText = data.final_settlement.ranking
+          .map(r => `${r.rank}位: P${r.player_id} ${r.points}点 (差分 ${r.delta >= 0 ? '+' : ''}${r.delta})`)
+          .join('\n');
+        message += `\n\n=== 終局精算 ===\n${rankingText}`;
+      }
       alert(message);
     }
 

@@ -23,6 +23,7 @@ class Player:
 		self.discards: List[str] = []
 		self.melds: List[List[str]] = []  # 鳴きのリスト（各鳴きは3つの牌のリスト）
 		self.is_riichi: bool = False  # リーチ状態
+		self.points: int = 25000  # 持ち点
 
 	@property
 	def is_menzen(self) -> bool:
@@ -152,6 +153,7 @@ class Player:
 		"""プレイヤー情報を辞書化"""
 		return {
 			'player_id': self.player_id,
+			'points': self.points,
 			'hand': self.hand.to_list(),
 			'shanten': self.get_shanten(),
 			'discards': self.discards,
