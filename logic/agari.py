@@ -91,7 +91,15 @@ class AgariChecker:
         for meld in melds:
             if isinstance(meld, Meld):
                 normalized.append(meld)
+            elif isinstance(meld, dict):
+                # 辞書型（新しい仕様）の処理
+                tiles = meld.get("tiles", [])
+                is_closed = (meld.get("type") == "ankan")
+                m = self._build_meld_object(tiles, is_closed=is_closed)
+                if m is not None:
+                    normalized.append(m)
             elif isinstance(meld, list):
+                # リスト型（古い仕様）の処理
                 m = self._build_meld_object(meld)
                 if m is not None:
                     normalized.append(m)
@@ -122,21 +130,15 @@ class AgariChecker:
         return honors[idx34 - 27]
 
     def is_agari(self, hand_tiles: List[str], melds: Optional[List[Any]] = None) -> bool:
-        """
-        手牌がアガり形かどうかを判定
-        
-        Args:
-            hand_tiles: 手牌のリスト（例：['1m', '1m', '2p', ...]）
-        
-        Returns:
-            アガり形なら True、そうでなければ False
-        """
+        """手牌がアガり形かどうかを判定"""
         meld_objects = self._normalize_meld_objects(melds)
-        meld_tiles = self._flatten_meld_tiles(meld_objects)
-        total_tiles = len(hand_tiles) + len(meld_tiles)
-        if total_tiles != 14:
+        
+        # 🔴 修正ポイント：カンがあっても大丈夫なように「副露は実質3枚」として計算する
+        effective_tiles = len(hand_tiles) + len(meld_objects) * 3
+        if effective_tiles != 14:
             return False
         
+        meld_tiles = self._flatten_meld_tiles(meld_objects)
         try:
             full_tiles = hand_tiles + meld_tiles
             tiles_34 = self._tiles_to_34_array(full_tiles)
@@ -149,7 +151,7 @@ class AgariChecker:
         self,
         hand_tiles: List[str],
         win_tile: str,
-        melds: Optional[List[Meld]] = None,
+        melds: Optional[List[Any]] = None,
         is_tsumo: bool = False,
         player_wind: int = EAST,
         round_wind: int = EAST,
@@ -165,29 +167,22 @@ class AgariChecker:
         )
         return bool(result and result.get('valid') and not result.get('error'))
 
-    def meld_strings_to_objects(self, meld_tiles_list: List[List[str]]) -> List[Meld]:
-        """内部表現の副露（文字列リスト）を mahjong.meld.Meld の配列へ変換する。"""
-        result: List[Meld] = []
-        for tiles in meld_tiles_list or []:
-            if not tiles:
-                continue
-            meld_obj = self._build_meld_object(tiles)
-            if meld_obj is not None:
-                result.append(meld_obj)
-        return result
+    def meld_strings_to_objects(self, meld_tiles_list: List[Any]) -> List[Meld]:
+        """内部表現の副露を mahjong.meld.Meld の配列へ変換する。"""
+        return self._normalize_meld_objects(meld_tiles_list)
 
-    def _build_meld_object(self, tiles: List[str]) -> Optional[Meld]:
+    def _build_meld_object(self, tiles: List[str], is_closed: bool = False) -> Optional[Meld]:
         """3/4枚の牌リストから Meld オブジェクトを作成。"""
         if len(tiles) not in (3, 4):
             return None
 
-        # カン（4枚）は和了判定・点数計算上は3枚面子（ポン相当）として扱う
-        if len(tiles) == 4 and all(t == tiles[0] for t in tiles):
-            tiles = [tiles[0], tiles[1], tiles[2]]
-
         tile_136 = self._tiles_to_136_array(tiles)
         if len(tile_136) != len(tiles):
             return None
+
+        # 🔴 修正ポイント：4枚の場合はちゃんと「カン」として登録する
+        if len(tiles) == 4 and all(t == tiles[0] for t in tiles):
+            return Meld(meld_type=Meld.KAN, tiles=tile_136, opened=not is_closed)
 
         if all(t == tiles[0] for t in tiles):
             return Meld(meld_type=Meld.PON, tiles=tile_136, opened=True)
@@ -208,7 +203,7 @@ class AgariChecker:
         win_tile: str,
         is_tsumo: bool = True,
         is_dealer: bool = False,
-        melds: Optional[List[Meld]] = None,
+        melds: Optional[List[Any]] = None,
         player_wind: int = EAST,
         round_wind: int = EAST,
         dora_indicators: Optional[List[str]] = None,
@@ -216,82 +211,33 @@ class AgariChecker:
         is_ippatsu: bool = False,
         honba_count: int = 0,
     ) -> Optional[Dict[str, Any]]:
-        """
-        アガり手の点数を計算
-        
-        自風・場風・ドラを考慮した詳細な点数計算を行う
-        
-        Args:
-            hand_tiles: 手牌のリスト（14枚）
-            win_tile: アガり牌
-            is_tsumo: ツモ和了かどうかのフラグ
-            is_dealer: 親かどうかのフラグ
-            melds: 鳴きのリスト
-            player_wind: 自風（1:東, 2:南, 3:西, 4:北）
-            round_wind: 場風（1:東, 2:南, 3:西, 4:北）
-            dora_indicators: ドラ表示牌のリスト（例：['5m', '1p']）
-        
-        Returns:
-            {
-                'valid': bool,
-                'error': Optional[str],
-                'han': int,
-                'fu': int,
-                'cost': {
-                    'main': int,          # 総支払い金額
-                    'main_bonus': int,    # 親／子のボーナス
-                    'additional': int,    # 追加支払い
-                    'additional_bonus': int,
-                    'kyoutaku_bonus': int,
-                    'total': int
-                },
-                'limit': str,             # 満貫、跳満など
-                'yaku': List[str],        # 成立した役のリスト
-            }
-        """
+        """アガり手の点数を計算"""
         meld_objects = self._normalize_meld_objects(melds)
 
-        # ロン時は他家の捨て牌（win_tile）が手牌配列に未反映のことがあるため、ここで正規化する。
-        # 手牌（暗部）期待枚数 = 14 - 副露枚数
-        meld_tiles_count = sum(len(getattr(m, 'tiles', []) or []) for m in meld_objects)
-        expected_concealed_tiles = 14 - meld_tiles_count
+        # 🔴 修正ポイント：ここでも「実質枚数」を使って判定する
+        effective_tiles = len(hand_tiles) + len(meld_objects) * 3
 
         normalized_hand_tiles = list(hand_tiles)
-        if len(normalized_hand_tiles) == expected_concealed_tiles - 1:
+        # ロンの場合は13枚なのでアガリ牌を足す
+        if effective_tiles == 13:
             normalized_hand_tiles.append(win_tile)
+            effective_tiles = 14
 
-        full_hand_tiles = normalized_hand_tiles + self._flatten_meld_tiles(meld_objects)
-        if len(full_hand_tiles) != 14:
+        if effective_tiles != 14:
             return {
                 'valid': False,
-                'error': '手牌＋副露の合計は14枚である必要があります',
-                'han': 0,
-                'fu': 0,
-                'cost': {'main': 0},
-                'limit': 'なし',
-                'yaku': [],
+                'error': f'手牌の実質合計枚数が不正です (現在: {effective_tiles}枚)',
+                'han': 0, 'fu': 0, 'cost': {'main': 0}, 'limit': 'なし', 'yaku': [],
             }
 
         try:
-            # タイル情報の変換
+            full_hand_tiles = normalized_hand_tiles + self._flatten_meld_tiles(meld_objects)
             tiles_136 = self._tiles_to_136_array(full_hand_tiles)
-            # アガり牌は convert_tile_to_136 で正規化（英文字字牌にも対応）
             win_tile_136 = self.convert_tile_to_136(win_tile)
 
-            # 変換に失敗した場合は invalid
             if not tiles_136 or win_tile_136 is None:
-                return {
-                    'valid': False,
-                    'error': 'タイル形式が無効です',
-                    'han': 0,
-                    'fu': 0,
-                    'cost': {'main': 0},
-                    'limit': 'なし',
-                    'yaku': [],
-                }
+                return {'valid': False, 'error': 'タイル形式が無効です', 'han': 0, 'fu': 0, 'cost': {'main': 0}, 'limit': 'なし', 'yaku': []}
             
-            # HandConfig を設定（player_wind/round_wind/リーチは HandConfig に渡す）
-            # 喰いタンあり（オープンタンヤオ有効）
             config = HandConfig(
                 is_tsumo=is_tsumo,
                 player_wind=player_wind,
@@ -303,8 +249,6 @@ class AgariChecker:
             config.is_riichi = is_riichi
             config.is_ippatsu = bool(is_ippatsu and is_riichi)
 
-            # ドラ表示牌を136形式に変換して渡す
-            # ドラ表示牌のリストを136配列に変換（複数の牌に対応）
             dora_136 = []
             if dora_indicators:
                 for ind in dora_indicators:
@@ -312,38 +256,26 @@ class AgariChecker:
                     if idx is not None:
                         dora_136.append(idx)
             
-            # 手数を計算
             result = self.calculator.estimate_hand_value(
                 tiles_136, win_tile_136, melds=meld_objects, dora_indicators=dora_136, config=config
             )
 
             yaku_list = result.yaku if result and result.yaku is not None else []
-
-            # 結果を整形
-            # limit を翻数から判定
             limit = self._calculate_limit(result.han)
-            
             yaku_names = [yaku.name for yaku in yaku_list]
             display_yaku = [self.YAKU_DISPLAY_MAP.get(name, name) for name in yaku_names]
+            
             return {
                 'valid': result.error is None,
                 'error': result.error,
                 'han': result.han,
                 'fu': result.fu,
-                'cost': result.cost,  # 詳細な支払い情報をそのまま返す
+                'cost': result.cost,
                 'limit': limit,
                 'yaku': display_yaku,
             }
         except Exception as e:
-            return {
-                'valid': False,
-                'error': str(e),
-                'han': 0,
-                'fu': 0,
-                'cost': {'main': 0},
-                'limit': 'なし',
-                'yaku': [],
-            }
+            return {'valid': False, 'error': str(e), 'han': 0, 'fu': 0, 'cost': {'main': 0}, 'limit': 'なし', 'yaku': []}
 
     def _tiles_to_34_array(self, hand_tiles: List[str]) -> List[int]:
         """

@@ -16,8 +16,51 @@ class Game:
 
 	DEBUG_PLAYER0_TENPAI_HAND = [
 		'1m', '2m', '3m', '4m', '5m', '6m', '7m', '8m', '9m',
-		'1p', '1p', '1p', '2s', '3s',
+		'1p', '1p', '1p', '1p', '3s',
 	]
+
+	def check_available_ankan(self, player_id: int) -> List[str]:
+		"""
+		指定プレイヤーが暗槓可能な牌一覧を返す
+		"""
+		if player_id < 0 or player_id >= len(self.players):
+			return []
+		player = self.players[player_id]
+		hand_tiles = player.hand.to_list()
+		candidates = set([t for t in hand_tiles if hand_tiles.count(t) >= 4])
+		return list(candidates)
+
+	def apply_ankan(self, player_id: int, tile: str) -> bool:
+		"""
+		暗槓を適用
+		Args:
+			player_id: プレイヤーID
+			tile: 暗槓する牌
+		Returns:
+			成功ならTrue
+		"""
+		if player_id < 0 or player_id >= len(self.players):
+			return False
+		player = self.players[player_id]
+		if getattr(player, 'is_riichi', False):
+			return False
+		# 暗槓は手牌に4枚必要
+		if player.hand.to_list().count(tile) < 4:
+			return False
+		ok = player.call_kan(tile, is_closed=True)
+		if ok:
+			self.ippatsu_eligible = [False] * self.num_players
+			self.kan_count += 1
+			next_dora_idx = 4 + 2 * self.kan_count
+			if self.dead_wall and next_dora_idx < len(self.dead_wall):
+				self.dora_indicator = self.dead_wall[next_dora_idx]
+			# カンをしたプレイヤーに番が移る
+			self.current_turn = player_id
+			# 補充牌を1枚ツモさせる（山があれば）
+			if self.wall:
+				repl = self.wall.pop()
+				player.add_tile(repl)
+		return ok
 
 	def __init__(self, num_players: int = 4, human_player_id: int = 0):
 		"""
@@ -67,7 +110,7 @@ class Game:
 		for player in self.players:
 			player.hand.tiles = []
 			player.discards = []
-			player.melds = []
+			player.melds = []  # 新形式でのみ追加される
 			player.is_riichi = False
 		self.current_turn = self.dealer_id
 		self.is_game_over = False
@@ -115,7 +158,7 @@ class Game:
 		for player in self.players:
 			player.hand.tiles = []
 			player.discards = []
-			player.melds = []
+			player.melds = []  # 新形式でのみ追加される
 			player.is_riichi = False
 
 		self.dealer_id = 0
@@ -145,10 +188,12 @@ class Game:
 				if self.wall:
 					self.players[pid].add_tile(self.wall.pop())
 
-	def _effective_meld_tiles_count(self, melds: List[List[str]]) -> int:
+	def _effective_meld_tiles_count(self, melds) -> int:
 		"""和了計算上の副露枚数を返す（カンは3枚相当として扱う）。"""
+		# meldsがdict型ならtilesだけ抽出
+		meld_list = [m["tiles"] if isinstance(m, dict) else m for m in melds]
 		count = 0
-		for meld in melds:
+		for meld in meld_list:
 			if len(meld) == 4:
 				count += 3
 			else:
@@ -213,7 +258,7 @@ class Game:
 		for i in range(1, self.num_players):
 			pid = (discarder_id + i) % self.num_players
 			player = self.players[pid]
-			player_melds = self.players[pid].melds
+			player_melds = [m["tiles"] if isinstance(m, dict) else m for m in self.players[pid].melds]
 			is_furiten = self.is_furiten(pid)
 			calls = {
 				'can_pong': self._call_checker.can_pong(player.hand.to_list(), discarded_tile),
@@ -299,7 +344,7 @@ class Game:
 			return drawn_tile in self.riichi_wait_tiles[player_id]
 
 		player = self.players[player_id]
-		melds = self._agari_checker.meld_strings_to_objects(player.melds)
+		melds = self._agari_checker.meld_strings_to_objects([m["tiles"] if isinstance(m, dict) else m for m in player.melds])
 		player_wind = self.get_player_wind(player_id)
 		return self._agari_checker.can_win(
 			hand_tiles=player.hand.to_list(),
@@ -310,15 +355,16 @@ class Game:
 			round_wind=self.round_wind,
 		)
 
-	def _compute_wait_tiles_from_hand(self, hand_tiles: List[str], melds: List[List[str]]) -> List[str]:
+	def _compute_wait_tiles_from_hand(self, hand_tiles: List[str], melds) -> List[str]:
 		"""13枚手牌（＋副露）から待ち牌一覧を算出する。"""
+		meld_list = [m["tiles"] if isinstance(m, dict) else m for m in melds]
 		candidates = ['1m','2m','3m','4m','5m','6m','7m','8m','9m',
 					  '1p','2p','3p','4p','5p','6p','7p','8p','9p',
 					  '1s','2s','3s','4s','5s','6s','7s','8s','9s',
 					  'E','S','W','N','P','F','C']
 		winners: List[str] = []
 		for candidate in candidates:
-			if self._agari_checker.is_agari(hand_tiles + [candidate], melds=melds):
+			if self._agari_checker.is_agari(hand_tiles + [candidate], melds=meld_list):
 				winners.append(candidate)
 		return winners
 
@@ -417,7 +463,8 @@ class Game:
 		if discard_index < 0 or discard_index >= len(current_player.hand):
 			raise ValueError(f"Invalid discard index: {discard_index}")
 
-		if declare_riichi and current_player.melds:
+		# 門前判定は暗槓以外の副露があるかで判定
+		if declare_riichi and not current_player.is_menzen:
 			return {
 				'error': 'Cannot declare riichi after calling melds',
 				'current_turn': self.current_turn,
@@ -470,6 +517,11 @@ class Game:
 		self.current_discarder_id = None
 		auto_result = self._auto_discard_after_riichi_if_needed(drawn)
 
+		# 暗槓可能な牌リストを返却
+		available_ankan_tiles = []
+		if self.current_turn == self.human_player_id and self.phase == 'discard':
+			available_ankan_tiles = self.check_available_ankan(self.human_player_id)
+
 		return {
 			'discarded_tile': auto_result.get('discarded_tile', discarded_tile),
 			'discarder_id': auto_result.get('discarder_id', discarder_id),
@@ -481,6 +533,7 @@ class Game:
 			'wall_count': len(self.wall),
 			'is_game_over': self.is_game_over,
 			'remaining_draws': max(len(self.wall), 0),
+			'available_ankan_tiles': available_ankan_tiles,
 		}
 
 	def resolve_pending_call(self, player_id: int, action: str, tiles: Optional[List[str]] = None) -> Dict[str, Any]:
@@ -668,7 +721,8 @@ class Game:
 					'discards': p.discards,
 					'melds': p.melds,
 					'is_ai': p.is_ai,
-					'is_riichi': getattr(p, 'is_riichi', False)
+					'is_riichi': getattr(p, 'is_riichi', False),
+					'is_menzen': getattr(p, 'is_menzen', len(p.melds) == 0)
 				}
 				for p in self.players
 			],
@@ -676,6 +730,7 @@ class Game:
 			'riichi_locked_hands': self.riichi_locked_hands,
 			'riichi_wait_tiles': self.riichi_wait_tiles,
 			'received_calls': self.received_calls,
+			'available_ankan_tiles': self.check_available_ankan(self.human_player_id) if self.current_turn == self.human_player_id and self.phase == 'discard' else [],
 		}
 
 	def check_agari(self, player_id: int) -> bool:

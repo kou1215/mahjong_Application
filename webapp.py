@@ -58,7 +58,6 @@ def get_game_from_session() -> Game:
 		# is_riichiフラグも復元
 		game.players[i].is_riichi = p_data.get('is_riichi', False)
 
-
 	# received_callsも復元
 	game.received_calls = game_data.get('received_calls', {})
 	game.ippatsu_eligible = game_data.get('ippatsu_eligible', [False] * game.num_players)
@@ -116,6 +115,8 @@ def build_state_response(game: Game, result: dict | None = None) -> dict:
 		'is_riichi': [p.is_riichi for p in game.players],
 		'ippatsu_eligible': game.ippatsu_eligible,
 		'furiten_list': [game.is_furiten(i) for i in range(game.num_players)],
+		'available_ankan_tiles': game.check_available_ankan(0),
+		'can_tsumo_agari': game.check_agari(0),
 	}
 	if 'ok' in result:
 		response_data['ok'] = result['ok']
@@ -330,6 +331,38 @@ def check_agari():
 	save_game_to_session(game)
 	return jsonify(build_state_response(game, win_result))
 
+# 暗槓の処理エンドポイント
+@app.route('/apply_ankan', methods=['POST'])
+def apply_ankan_route():
+    """暗槓の処理を行うエンドポイント"""
+    game = get_game_from_session()
+    if game is None:
+        return jsonify({'error': 'No game in progress'}), 400
+
+    try:
+        player_id = int(request.json.get('player_id', 0))
+        tile = request.json.get('tile')
+    except (TypeError, ValueError):
+        return jsonify({'error': 'Invalid parameters'}), 400
+
+    if not tile:
+        return jsonify({'error': 'Tile is required'}), 400
+
+    # 🔴 ここがポイント：既存の apply_kan を is_closed=True（暗槓）として流用！
+    # これにより、ドラめくりと嶺上牌のツモが自動で行われます。
+    success = game.apply_kan(player_id, tile, is_closed=True)
+    if not success:
+        return jsonify({'error': '暗槓を実行できませんでした'}), 400
+
+    # apply_kan の中で嶺上牌をツモっているので、手牌の一番最後の牌を「今回引いた牌」として取得する
+    player = game.players[player_id]
+    next_draw = player.hand.to_list()[-1] if player.hand.to_list() else None
+
+    # セッションに状態を保存
+    save_game_to_session(game)
+
+    # 🔴 フロントエンドが必要とする正しいフォーマット（build_state_response）で返す
+    return jsonify(build_state_response(game, {'ok': True, 'action': 'ankan', 'next_draw': next_draw}))
 
 if __name__ == '__main__':
 	app.run(debug=True)

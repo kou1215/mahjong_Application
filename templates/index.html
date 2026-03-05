@@ -10,11 +10,12 @@
     #mahjong-stadium {
       display: flex;
       flex-direction: column;
-      height: 95vh;
+      min-height: 95vh; /* 🔴 height を min-height に変更 */
       justify-content: space-between;
       padding: 10px;
       background-color: #2c5d3f;
       color: white;
+      overflow-y: auto; /* 🔴 これを追加（縦スクロールを許可） */
     }
     #opponents-row {
       display: flex;
@@ -60,8 +61,8 @@
     #my-area {
       text-align: center;
       background: rgba(0,0,0,0.3);
-      padding: 20px;
-      border-radius: 10px;
+      padding: 2px;
+      border-radius: 2px;
     }
     .tsumo-tile {
       margin-left: 20px !important;
@@ -137,7 +138,7 @@
       {# Template block #}
       {% if hands_view %}
           {% if hands_view[0] %}
-             <div class="my-label">あなた (Player 0)</div>
+             <div class="my-label">自分</div>
           <div class="discards" id="discards-0"></div>
           <div id="melds-display-area" style="margin-bottom:12px;"></div>
           <div id="agari-tiles-area" style="margin-bottom:10px;"></div>
@@ -307,17 +308,30 @@
       });
     }
 
-    function canShowTsumoAction() {
-      return currentTurn === 0 && gamePhase === 'discard' && !!lastDrawnTile;
+function canShowTsumoAction() {
+      // 🔴 ツモアガリできるかどうかの判定
+      return currentTurn === 0 && gamePhase === 'discard' && !!lastDrawnTile && window.canTsumoAgari;
     }
 
     function renderSelfActions() {
+      if (typeof window.availableAnkanTiles === 'undefined') {
+        window.availableAnkanTiles = JSON.parse('{{ available_ankan_tiles | tojson | safe if available_ankan_tiles is defined else "[]" }}');
+      }
       const area = document.getElementById('available-calls-area');
       if (!area) return;
       area.innerHTML = '';
 
-      if (!canShowTsumoAction()) {
-        return;
+      // 🔴 ツモボタンも暗槓ボタンも出せない時は何もしない
+      const canTsumo = canShowTsumoAction();
+      const canAnkan = window.availableAnkanTiles && Array.isArray(window.availableAnkanTiles) && window.availableAnkanTiles.length > 0;
+      
+      // 自分のターンで「discard」フェーズの時のみボタンを出す権利がある
+      if (currentTurn !== 0 || gamePhase !== 'discard') {
+         return;
+      }
+      
+      if (!canTsumo && !canAnkan) {
+         return;
       }
 
       const box = document.createElement('div');
@@ -327,13 +341,28 @@
       box.style.borderRadius = '6px';
 
       const label = document.createElement('strong');
-      label.innerText = 'Player 0:';
+      label.innerText = 'Player 0: ';
       box.appendChild(label);
 
-      const tsumoBtn = document.createElement('button');
-      tsumoBtn.innerText = 'ツモ';
-      tsumoBtn.onclick = () => checkAgari();
-      box.appendChild(tsumoBtn);
+      // ツモボタン（条件を満たした時のみ）
+      if (canTsumo) {
+        const tsumoBtn = document.createElement('button');
+        tsumoBtn.innerText = 'ツモ';
+        tsumoBtn.onclick = () => checkAgari();
+        box.appendChild(tsumoBtn);
+      }
+
+      // 暗槓ボタン
+      if (canAnkan) {
+        window.availableAnkanTiles.forEach(tile => {
+          const ankanBtn = document.createElement('button');
+          ankanBtn.innerText = '暗槓 ' + tile;
+          ankanBtn.onclick = () => applyAnkan(tile);
+          // ツモボタンと少し隙間をあける
+          ankanBtn.style.marginLeft = '8px';
+          box.appendChild(ankanBtn);
+        });
+      }
 
       area.appendChild(box);
     }
@@ -344,6 +373,70 @@
         return;
       }
       renderSelfActions();
+    }
+
+    function renderActionArea(availableCalls, discardedTile) {
+      if (availableCalls && availableCalls.length > 0) {
+        renderAvailableCalls(availableCalls, discardedTile);
+        return;
+      }
+      renderSelfActions();
+    }
+
+    // 🔴 ここから下のコードを丸ごと追加してください！ 🔴
+    async function applyAnkan(tile) {
+      const res = await fetch('/apply_ankan', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ player_id: 0, tile: tile })
+      });
+      
+      if (!res.ok) {
+        alert('暗槓エラー: ' + (await res.text()));
+        return;
+      }
+      
+      const data = await res.json();
+      
+      window.availableAnkanTiles = data.available_ankan_tiles || [];
+      window.canTsumoAgari = (typeof data.can_tsumo_agari !== 'undefined') ? data.can_tsumo_agari : false;
+      
+      // UIの更新処理
+      is_riichi = data.is_riichi || is_riichi;
+      ippatsu_eligible = data.ippatsu_eligible || ippatsu_eligible;
+      furiten_list = data.furiten_list || furiten_list;
+      can_riichi = (typeof data.can_riichi !== 'undefined') ? data.can_riichi : can_riichi;
+      seatWindLabels = data.seat_wind_labels || seatWindLabels;
+      roundWindLabel = (typeof data.round_wind_label !== 'undefined') ? data.round_wind_label : roundWindLabel;
+      honbaCount = (typeof data.honba !== 'undefined') ? data.honba : honbaCount;
+      updatePlayerStatusBadges(is_riichi, ippatsu_eligible, furiten_list);
+      
+      currentTurn = data.current_turn;
+      gamePhase = data.phase;
+      window.player0_draw = data.next_draw;
+      window.shantenValues = data.shanten_list;
+      lastDrawnTile = data.next_draw;
+      
+      updateHands(data.hands, data.shanten_list);
+      syncDiscardsFromServer(data);
+      displayAllMelds(data.melds || [[], [], [], []]);
+      renderAgariTiles((data.agari_tiles && data.agari_tiles[0]) ? data.agari_tiles[0] : []);
+      renderDoraIndicators(data.dora_indicators || (data.dora_indicator ? [data.dora_indicator] : []));
+      refreshTurnInfo();
+      renderActionArea(data.available_calls, data.discarded_tile);
+      
+      if (typeof data.remaining_draws !== 'undefined') {
+        const drawsElem = document.getElementById('remaining_draws-count');
+        if (drawsElem) drawsElem.textContent = data.remaining_draws;
+      }
+      
+      if (data.is_game_over) {
+        document.getElementById('gameover-message').style.display = 'block';
+        disableTileClickHandlers();
+      } else {
+        document.getElementById('gameover-message').style.display = 'none';
+        setTileClickHandlers();
+      }
     }
 
     // 誤って消えていた discardTile 関数を復元・修正
@@ -358,6 +451,9 @@
         return;
       }
       const data = await res.json();
+      // サーバーから暗槓可能牌リストとツモアガリ可否を受け取る
+      window.availableAnkanTiles = data.available_ankan_tiles || [];
+      window.canTsumoAgari = (typeof data.can_tsumo_agari !== 'undefined') ? data.can_tsumo_agari : true;
       // デバッグ用: サーバーから返ってきたis_riichiリストを出力
       console.log("--- Server Response: is_riichi List ---");
       console.table(data.is_riichi);
@@ -427,12 +523,14 @@
       }
 
       const data = await res.json();
+      window.availableAnkanTiles = data.available_ankan_tiles || [];
+      window.canTsumoAgari = (typeof data.can_tsumo_agari !== 'undefined') ? data.can_tsumo_agari : true;
       is_riichi = data.is_riichi || is_riichi;
       ippatsu_eligible = data.ippatsu_eligible || ippatsu_eligible;
       furiten_list = data.furiten_list || furiten_list;
       can_riichi = (typeof data.can_riichi !== 'undefined') ? data.can_riichi : can_riichi;
       seatWindLabels = data.seat_wind_labels || seatWindLabels;
-      roundWindLabel = (typeof data.round_wind_label !== 'undefined') ? data.round_wind_label : roundWindLabel;
+      roundWindLabel = (typeof data.round_wind_label !== 'undefined') ? data.roundWindLabel : roundWindLabel;
       honbaCount = (typeof data.honba !== 'undefined') ? data.honba : honbaCount;
 
       currentTurn = data.current_turn;
@@ -614,7 +712,10 @@
         box.style.gap = '4px';
         box.style.marginBottom = '4px';
         
-        meld.forEach(tile => {
+        // 🔴 ここを修正：サーバーから辞書型(dict)で来た場合と、リスト(array)で来た場合の両方に対応
+        const tilesToRender = meld.tiles ? meld.tiles : meld;
+
+        tilesToRender.forEach(tile => {
           const img = document.createElement('img');
           img.className = 'tile';
           if (playerId === 0) {
