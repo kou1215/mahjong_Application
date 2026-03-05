@@ -95,6 +95,7 @@ def build_state_response(game: Game, result: dict | None = None) -> dict:
 	response_data = {
 		'current_turn': game.current_turn,
 		'phase': game.phase,
+		'points': [p.points for p in game.players],
 		'round_wind': game.round_wind,
 		'round_wind_label': wind_to_label(game.round_wind),
 		'dealer_id': game.dealer_id,
